@@ -34,7 +34,7 @@ export class ChatService {
     });
 
     this.wails.onEvent('chat:message', (msg: Message) => {
-      this.messages.update(msgs => [...msgs, msg]);
+      this.messages.update(msgs => [...msgs, this.formatMessage(msg)]);
       this.isStreaming.set(false);
       this.streamingContent.set('');
     });
@@ -57,7 +57,7 @@ export class ChatService {
     this.isLoading.set(true);
     try {
       const msgs = await this.wails.getMessages(id);
-      this.messages.set(msgs);
+      this.messages.set(msgs.map(m => this.formatMessage(m)));
     } finally {
       this.isLoading.set(false);
     }
@@ -107,5 +107,28 @@ export class ChatService {
       this.activeConversationId.set(null);
       this.messages.set([]);
     }
+  }
+
+  private formatMessage(msg: Message): Message {
+    const displayMsg = { ...msg };
+
+    if (displayMsg.toolCalls) {
+      try {
+        const tools = JSON.parse(displayMsg.toolCalls);
+        const toolsText = tools.map((t: any) =>
+          `\n\n⚙️ Chamando ferramenta: \`${t.name}\`\nParâmetros: ${t.arguments}`
+        ).join('');
+        displayMsg.content = (displayMsg.content || '') + toolsText;
+      } catch (e) {
+        console.error("Erro ao parsear toolCalls", e);
+      }
+    } else if (displayMsg.role === 'tool') {
+      displayMsg.content = `<details style="margin-top: 8px; background: rgba(0, 0, 0, 0.1); padding: 8px; border-radius: 6px;">
+  <summary style="cursor: pointer; font-weight: bold; opacity: 0.8;">✅ Retorno da ferramenta</summary>
+  <pre style="margin-top: 10px; overflow-x: auto; font-size: 0.85em;"><code>${displayMsg.content}</code></pre>
+</details>`;
+    }
+
+    return displayMsg;
   }
 }

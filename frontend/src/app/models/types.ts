@@ -17,6 +17,8 @@ export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   model: string;
+  toolCalls?: string;
+  toolCallId?: string;
   createdAt: string;
 }
 

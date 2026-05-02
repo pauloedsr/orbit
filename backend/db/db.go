@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,8 @@ type Message struct {
 	Role           string
 	Content        string
 	Model          string
+	ToolCalls      string
+	ToolCallID     string
 	CreatedAt      time.Time
 }
 
@@ -80,6 +83,8 @@ func (d *Database) migrate() error {
 			role            TEXT NOT NULL CHECK(role IN ('system','user','assistant','tool')),
 			content         TEXT NOT NULL,
 			model           TEXT NOT NULL DEFAULT '',
+			tool_calls      TEXT NOT NULL DEFAULT '',
+			tool_call_id    TEXT NOT NULL DEFAULT '',
 			created_at      DATETIME NOT NULL DEFAULT (datetime('now'))
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at)`,
@@ -95,11 +100,16 @@ func (d *Database) migrate() error {
 			env     TEXT NOT NULL DEFAULT '{}',
 			enabled INTEGER NOT NULL DEFAULT 1
 		)`,
+		`ALTER TABLE messages ADD COLUMN tool_calls TEXT DEFAULT ''`,
+		`ALTER TABLE messages ADD COLUMN tool_call_id TEXT DEFAULT ''`,
 	}
 
 	for _, m := range migrations {
 		if _, err := d.conn.Exec(m); err != nil {
-			return fmt.Errorf("exec migration: %w", err)
+			// Ignora o erro intencional caso a coluna já tenha sido criada em dev anterior
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("exec migration: %w", err)
+			}
 		}
 	}
 	return nil
@@ -165,12 +175,12 @@ func (d *Database) TouchConversation(id string) error {
 // Messages CRUD
 // ---------------------------------------------------------------------------
 
-func (d *Database) AddMessage(conversationID, role, content, model string) (Message, error) {
+func (d *Database) AddMessage(conversationID, role, content, model, toolCalls, toolCallID string) (Message, error) {
 	id := uuid.NewString()
 	now := time.Now().UTC()
 	_, err := d.conn.Exec(
-		`INSERT INTO messages (id, conversation_id, role, content, model, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, conversationID, role, content, model, now,
+		`INSERT INTO messages (id, conversation_id, role, content, model, tool_calls, tool_call_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, conversationID, role, content, model, toolCalls, toolCallID, now,
 	)
 	if err != nil {
 		return Message{}, err
@@ -182,13 +192,14 @@ func (d *Database) AddMessage(conversationID, role, content, model string) (Mess
 	return Message{
 		ID: id, ConversationID: conversationID,
 		Role: role, Content: content, Model: model,
+		ToolCalls: toolCalls, ToolCallID: toolCallID,
 		CreatedAt: now,
 	}, nil
 }
 
 func (d *Database) GetMessages(conversationID string) ([]Message, error) {
 	rows, err := d.conn.Query(
-		`SELECT id, conversation_id, role, content, model, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`,
+		`SELECT id, conversation_id, role, content, model, tool_calls, tool_call_id, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`,
 		conversationID,
 	)
 	if err != nil {
@@ -199,7 +210,7 @@ func (d *Database) GetMessages(conversationID string) ([]Message, error) {
 	var out []Message
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Role, &m.Content, &m.Model, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Role, &m.Content, &m.Model, &m.ToolCalls, &m.ToolCallID, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

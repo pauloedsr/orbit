@@ -31,21 +31,48 @@ func NewOpenAIProvider(name, baseURL, apiKey string) *OpenAIProvider {
 func (p *OpenAIProvider) Name() string        { return p.name }
 func (p *OpenAIProvider) SupportsTools() bool { return true }
 
+type oaiTool struct {
+	Type     string      `json:"type"`
+	Function oaiFunction `json:"function"`
+}
+
+type oaiFunction struct {
+	Name        string      `json:"name,omitempty"`
+	Description string      `json:"description,omitempty"`
+	Parameters  interface{} `json:"parameters,omitempty"`
+}
+
+type oaiToolCall struct {
+	Index    *int             `json:"index,omitempty"`
+	ID       string           `json:"id,omitempty"`
+	Type     string           `json:"type,omitempty"`
+	Function *oaiFunctionCall `json:"function,omitempty"`
+}
+
+type oaiFunctionCall struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+}
+
 type oaiMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string        `json:"role"`
+	Content    string        `json:"content"`
+	ToolCalls  []oaiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
 
 type oaiRequest struct {
 	Model    string       `json:"model"`
 	Messages []oaiMessage `json:"messages"`
+	Tools    []oaiTool    `json:"tools,omitempty"`
 	Stream   bool         `json:"stream"`
 }
 
 type oaiChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			Content   string        `json:"content"`
+			ToolCalls []oaiToolCall `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
@@ -62,12 +89,42 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 		msgs = append(msgs, oaiMessage{Role: "system", Content: req.System})
 	}
 	for _, m := range req.Messages {
-		msgs = append(msgs, oaiMessage{Role: m.Role, Content: m.Content})
+		var tcs []oaiToolCall
+		if len(m.ToolCalls) > 0 {
+			for _, tc := range m.ToolCalls {
+				tcs = append(tcs, oaiToolCall{
+					ID:       tc.ID,
+					Type:     "function",
+					Function: &oaiFunctionCall{Name: tc.Name, Arguments: tc.Arguments},
+				})
+			}
+		}
+		msgs = append(msgs, oaiMessage{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCalls:  tcs,
+			ToolCallID: m.ToolCallID,
+		})
+	}
+
+	var oaiTools []oaiTool
+	if len(req.Tools) > 0 {
+		for _, t := range req.Tools {
+			oaiTools = append(oaiTools, oaiTool{
+				Type: "function",
+				Function: oaiFunction{
+					Name:        t.Name,
+					Description: t.Description,
+					Parameters:  t.Parameters,
+				},
+			})
+		}
 	}
 
 	body, err := json.Marshal(oaiRequest{
 		Model:    req.Model,
 		Messages: msgs,
+		Tools:    oaiTools,
 		Stream:   true,
 	})
 	if err != nil {
@@ -128,8 +185,34 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 			return err
 		}
 		if len(chunk.Choices) > 0 {
-			if text := chunk.Choices[0].Delta.Content; text != "" {
+			delta := chunk.Choices[0].Delta
+			if text := delta.Content; text != "" {
 				out <- Event{Type: EventTextDelta, Text: text}
+			}
+			for _, tc := range delta.ToolCalls {
+				idx := 0
+				if tc.Index != nil {
+					idx = *tc.Index
+				}
+				if tc.Function != nil && tc.Function.Name != "" {
+					out <- Event{
+						Type: EventToolCallStart,
+						ToolCall: &ToolCallEvent{
+							Index: idx,
+							ID:    tc.ID,
+							Name:  tc.Function.Name,
+						},
+					}
+				}
+				if tc.Function != nil && tc.Function.Arguments != "" {
+					out <- Event{
+						Type: EventToolCallDelta,
+						ToolCall: &ToolCallEvent{
+							Index:    idx,
+							ArgDelta: tc.Function.Arguments,
+						},
+					}
+				}
 			}
 		}
 	}
