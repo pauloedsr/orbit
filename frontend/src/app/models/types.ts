@@ -1,0 +1,34 @@
+// Espelha os DTOs definidos em app.go.
+// Wails gera bindings automaticamente, mas manter tipos explícitos
+// dá autocomplete e type safety no Angular.
+
+export interface Conversation {
+  id: string;
+  title: string;
+  model: string;
+  provider: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Message {
+  id: string;
+  conversationId: string;
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  model: string;
+  createdAt: string;
+}
+
+export interface Settings {
+  defaultModel: string;
+  defaultProvider: string;
+  theme: string;
+}
+
+// Estado da UI — não persiste no backend
+export interface ChatState {
+  activeConversationId: string | null;
+  isStreaming: boolean;
+  streamBuffer: string;
+}

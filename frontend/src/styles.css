@@ -1,0 +1,200 @@
+/* ============================================================
+   Orbit — Global Design Tokens & Reset
+   Estética: dark IDE, alta densidade, mono + sans pairing
+   ============================================================ */
+
+:root {
+  /* Surface */
+  --bg-primary: #0e0e10;
+  --bg-secondary: #16161a;
+  --bg-tertiary: #1e1e24;
+  --bg-hover: #25252d;
+  --bg-active: #2c2c36;
+
+  /* Borders */
+  --border-subtle: #2a2a34;
+  --border-default: #363642;
+  --border-strong: #4a4a58;
+
+  /* Text */
+  --text-primary: #e8e6e3;
+  --text-secondary: #9b99a5;
+  --text-tertiary: #6b697a;
+  --text-inverse: #0e0e10;
+
+  /* Accent — warm amber */
+  --accent: #f0a030;
+  --accent-dim: #c07820;
+  --accent-glow: rgba(240, 160, 48, 0.12);
+
+  /* Semantic */
+  --success: #34d399;
+  --error: #f87171;
+  --warning: #fbbf24;
+  --info: #60a5fa;
+
+  /* Roles */
+  --user-bg: #1a1d28;
+  --assistant-bg: transparent;
+
+  /* Typography */
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', monospace;
+
+  /* Spacing */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  /* Transitions */
+  --transition-fast: 120ms ease;
+  --transition-default: 200ms ease;
+}
+
+/* Reset */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Wails drag region — window title bar */
+.wails-drag {
+  --wails-draggable: drag;
+  -webkit-app-region: drag;
+}
+
+.wails-no-drag {
+  --wails-draggable: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+/* Scrollbar — thin, subtle */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-default);
+}
+
+/* Selection */
+::selection {
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Utility */
+.mono { font-family: var(--font-mono); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Markdown prose — applied to ngx-markdown output */
+.message-content h1,
+.message-content h2,
+.message-content h3,
+.message-content h4 {
+  color: var(--text-primary);
+  font-weight: 600;
+  margin: 1em 0 0.4em;
+  line-height: 1.3;
+}
+.message-content h1 { font-size: 1.35em; }
+.message-content h2 { font-size: 1.2em; }
+.message-content h3 { font-size: 1.05em; }
+
+.message-content p { margin: 0.5em 0; }
+
+.message-content a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.message-content ul,
+.message-content ol {
+  padding-left: 1.4em;
+  margin: 0.5em 0;
+}
+.message-content li { margin: 0.2em 0; }
+
+.message-content code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+}
+
+.message-content pre {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+.message-content pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.87em;
+}
+
+.message-content blockquote {
+  border-left: 3px solid var(--accent-dim);
+  padding-left: 12px;
+  margin: 0.5em 0;
+  color: var(--text-secondary);
+}
+
+.message-content hr {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 1em 0;
+}
+
+.message-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.6em 0;
+  font-size: 0.9em;
+}
+.message-content th,
+.message-content td {
+  border: 1px solid var(--border-default);
+  padding: 6px 10px;
+  text-align: left;
+}
+.message-content th {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
