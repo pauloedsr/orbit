@@ -51,12 +51,20 @@ import { WailsService } from '../../services/wails.service';
             </div>
           }
 
+          @if (chat.error()) {
+            <div class="message-error">
+              <span class="mono">⚠</span> {{ chat.error() }}
+            </div>
+          }
+
           @if (chat.isStreaming()) {
             <div class="message message-assistant">
               <div class="message-role mono">◉ assistant</div>
-              <div class="message-content">
-                <span class="cursor-blink">▊</span>
-              </div>
+              @if (chat.streamingContent()) {
+                <markdown class="message-content" [data]="chat.streamingContent()" />
+              } @else {
+                <div class="message-content"><span class="cursor-blink">▊</span></div>
+              }
             </div>
           }
         }
@@ -224,6 +232,16 @@ import { WailsService } from '../../services/wails.service';
       line-height: 1.7;
       white-space: pre-wrap;
       word-break: break-word;
+    }
+
+    .message-error {
+      max-width: 800px;
+      margin: 8px auto;
+      width: 100%;
+      padding: 10px 24px;
+      color: var(--error);
+      font-size: 13px;
+      border-left: 2px solid var(--error);
     }
 
     @keyframes blink {

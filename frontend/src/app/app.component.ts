@@ -1,17 +1,21 @@
 import { Component, HostListener } from '@angular/core';
 import { SidebarComponent } from './components/sidebar/sidebar.component';
 import { ChatComponent } from './components/chat/chat.component';
+import { SettingsComponent } from './components/settings/settings.component';
 import { ChatService } from './services/chat.service';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [SidebarComponent, ChatComponent],
+  imports: [SidebarComponent, ChatComponent, SettingsComponent],
   template: `
     <div class="app-shell">
       <app-sidebar />
       <app-chat style="width: 100%;" />
     </div>
+    @if (chat.showSettings()) {
+      <app-settings />
+    }
   `,
   styles: [`
     :host {
@@ -30,7 +34,7 @@ import { ChatService } from './services/chat.service';
   `]
 })
 export class AppComponent {
-  constructor(private chat: ChatService) { }
+  constructor(public chat: ChatService) { }
 
   @HostListener('window:keydown', ['$event'])
   handleKeyboard(event: KeyboardEvent) {

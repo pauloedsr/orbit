@@ -143,6 +143,14 @@ func (d *Database) ListConversations() ([]Conversation, error) {
 	return out, rows.Err()
 }
 
+func (d *Database) GetConversation(id string) (Conversation, error) {
+	var c Conversation
+	err := d.conn.QueryRow(
+		`SELECT id, title, model, provider, created_at, updated_at FROM conversations WHERE id = ?`, id,
+	).Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &c.CreatedAt, &c.UpdatedAt)
+	return c, err
+}
+
 func (d *Database) DeleteConversation(id string) error {
 	_, err := d.conn.Exec(`DELETE FROM conversations WHERE id = ?`, id)
 	return err

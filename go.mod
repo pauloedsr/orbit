@@ -1,4 +1,4 @@
-module github.com/paulocanedo/orbit
+module github.com/pauloedsr/orbit
 
 go 1.23
 

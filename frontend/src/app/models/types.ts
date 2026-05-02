@@ -24,6 +24,9 @@ export interface Settings {
   defaultModel: string;
   defaultProvider: string;
   theme: string;
+  llmEndpoint: string;
+  llmApiKey: string;
+  llmModel: string;
 }
 
 // Estado da UI — não persiste no backend

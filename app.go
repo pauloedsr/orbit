@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/paulocanedo/orbit/backend/config"
-	"github.com/paulocanedo/orbit/backend/db"
+	"github.com/pauloedsr/orbit/backend/config"
+	"github.com/pauloedsr/orbit/backend/db"
+	"github.com/pauloedsr/orbit/backend/providers"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -101,29 +103,78 @@ func (a *App) AddMessage(conversationID, role, content, model string) (MessageDT
 }
 
 // ---------------------------------------------------------------------------
-// Chat (mock por enquanto — será substituído pelo provider real)
+// Chat
 // ---------------------------------------------------------------------------
 
 func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
-	// 1. Persiste mensagem do usuário
-	_, err := a.db.AddMessage(conversationID, "user", content, a.cfg.DefaultModel)
+	// 1. Valida configuração antes de persistir
+	endpoint, _ := a.db.GetSetting("llm_endpoint")
+	if endpoint == "" {
+		return MessageDTO{}, fmt.Errorf("LLM endpoint não configurado — abra Settings e configure o endpoint")
+	}
+	apiKey, _ := a.db.GetSetting("llm_api_key")
+
+	// 2. Persiste mensagem do usuário
+	_, err := a.db.AddMessage(conversationID, "user", content, "")
 	if err != nil {
 		return MessageDTO{}, fmt.Errorf("save user msg: %w", err)
 	}
 
-	// 2. Emite evento de "pensando" para a UI
+	// 3. Carrega conversa (para saber o modelo) e histórico
+	conv, err := a.db.GetConversation(conversationID)
+	if err != nil {
+		return MessageDTO{}, fmt.Errorf("get conversation: %w", err)
+	}
+	dbMsgs, err := a.db.GetMessages(conversationID)
+	if err != nil {
+		return MessageDTO{}, fmt.Errorf("get messages: %w", err)
+	}
+
+	// 4. Sinaliza "pensando" para a UI
 	runtime.EventsEmit(a.ctx, "chat:thinking", conversationID)
 
-	// 3. Mock: resposta fake (substituir pelo provider na fase 2)
-	reply := fmt.Sprintf("Echo from Orbit: %s", content)
+	// 5. Monta payload do provider
+	provMsgs := make([]providers.Message, 0, len(dbMsgs))
+	for _, m := range dbMsgs {
+		provMsgs = append(provMsgs, providers.Message{Role: m.Role, Content: m.Content})
+	}
 
-	// 4. Persiste resposta do assistente
-	msg, err := a.db.AddMessage(conversationID, "assistant", reply, a.cfg.DefaultModel)
+	model := conv.Model
+	if m, _ := a.db.GetSetting("llm_model"); m != "" {
+		model = m
+	}
+
+	req := providers.Request{
+		Model:    model,
+		Messages: provMsgs,
+		Stream:   true,
+	}
+
+	// 6. Streaming — corre em goroutine, main goroutine drena o canal
+	p := providers.NewOpenAIProvider("openai-compat", endpoint, apiKey)
+	eventCh := make(chan providers.Event, 64)
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.Stream(a.ctx, req, eventCh) }()
+
+	var buf strings.Builder
+	for evt := range eventCh {
+		switch evt.Type {
+		case providers.EventTextDelta:
+			buf.WriteString(evt.Text)
+			runtime.EventsEmit(a.ctx, "chat:chunk", evt.Text)
+		case providers.EventError:
+			// erro já chegará via errCh
+		}
+	}
+	if err := <-errCh; err != nil {
+		return MessageDTO{}, fmt.Errorf("stream: %w", err)
+	}
+
+	// 7. Persiste resposta e notifica UI
+	msg, err := a.db.AddMessage(conversationID, "assistant", buf.String(), model)
 	if err != nil {
 		return MessageDTO{}, fmt.Errorf("save assistant msg: %w", err)
 	}
-
-	// 5. Emite evento de resposta completa
 	runtime.EventsEmit(a.ctx, "chat:message", toMsgDTO(msg))
 
 	return toMsgDTO(msg), nil
@@ -137,14 +188,26 @@ type SettingsDTO struct {
 	DefaultModel    string `json:"defaultModel"`
 	DefaultProvider string `json:"defaultProvider"`
 	Theme           string `json:"theme"`
+	LLMEndpoint     string `json:"llmEndpoint"`
+	LLMApiKey       string `json:"llmApiKey"`
+	LLMModel        string `json:"llmModel"`
 }
 
-func (a *App) GetSettings() SettingsDTO {
+func (a *App) GetSettings() (SettingsDTO, error) {
+	endpoint, _ := a.db.GetSetting("llm_endpoint")
+	apiKey, _ := a.db.GetSetting("llm_api_key")
+	model, _ := a.db.GetSetting("llm_model")
+	if model == "" {
+		model = a.cfg.DefaultModel
+	}
 	return SettingsDTO{
 		DefaultModel:    a.cfg.DefaultModel,
 		DefaultProvider: a.cfg.DefaultProvider,
 		Theme:           a.cfg.Theme,
-	}
+		LLMEndpoint:     endpoint,
+		LLMApiKey:       apiKey,
+		LLMModel:        model,
+	}, nil
 }
 
 func (a *App) UpdateSetting(key, value string) error {

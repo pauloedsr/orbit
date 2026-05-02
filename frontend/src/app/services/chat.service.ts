@@ -1,15 +1,18 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { WailsService } from './wails.service';
-import { Conversation, Message } from '../models/types';
+import { Conversation, Message, Settings } from '../models/types';
 
 @Injectable({ providedIn: 'root' })
 export class ChatService {
-  // --- State via signals ---
   conversations = signal<Conversation[]>([]);
   activeConversationId = signal<string | null>(null);
   messages = signal<Message[]>([]);
   isLoading = signal(false);
   isStreaming = signal(false);
+  streamingContent = signal('');
+  showSettings = signal(false);
+  error = signal<string | null>(null);
+  settings = signal<Settings>({ defaultModel: '', defaultProvider: '', theme: 'dark', llmEndpoint: '', llmApiKey: '', llmModel: '' });
 
   activeConversation = computed(() => {
     const id = this.activeConversationId();
@@ -21,18 +24,27 @@ export class ChatService {
   }
 
   private async init() {
-    // Registra listeners de eventos Wails
     this.wails.onEvent('chat:thinking', () => {
       this.isStreaming.set(true);
+      this.streamingContent.set('');
+    });
+
+    this.wails.onEvent('chat:chunk', (text: string) => {
+      this.streamingContent.update(c => c + text);
     });
 
     this.wails.onEvent('chat:message', (msg: Message) => {
       this.messages.update(msgs => [...msgs, msg]);
       this.isStreaming.set(false);
+      this.streamingContent.set('');
     });
 
-    // Carrega conversas ao iniciar
-    await this.loadConversations();
+    const [convs, settings] = await Promise.all([
+      this.wails.listConversations(),
+      this.wails.getSettings(),
+    ]);
+    this.conversations.set(convs);
+    this.settings.set(settings);
   }
 
   async loadConversations() {
@@ -52,10 +64,11 @@ export class ChatService {
   }
 
   async createConversation(title?: string) {
+    const model = this.settings().llmModel || this.settings().defaultModel || 'gpt-4o';
     const conv = await this.wails.createConversation(
       title || 'Nova conversa',
-      'claude-sonnet-4-20250514',
-      'anthropic'
+      model,
+      'openai-compat'
     );
     this.conversations.update(c => [conv, ...c]);
     await this.selectConversation(conv.id);
@@ -77,12 +90,13 @@ export class ChatService {
     };
     this.messages.update(msgs => [...msgs, userMsg]);
 
-    // Envia ao backend (que persiste + chama o provider)
+    this.error.set(null);
     try {
       await this.wails.sendMessage(convId, content.trim());
-    } catch (err) {
-      console.error('send failed:', err);
+    } catch (err: any) {
       this.isStreaming.set(false);
+      this.streamingContent.set('');
+      this.error.set(typeof err === 'string' ? err : (err?.message ?? 'Erro desconhecido'));
     }
   }
 

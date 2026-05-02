@@ -72,8 +72,13 @@ export class WailsService {
   // ------------------------------------------
 
   async getSettings(): Promise<Settings> {
-    if (!this.go) return { defaultModel: 'mock', defaultProvider: 'mock', theme: 'dark' };
+    if (!this.go) return { defaultModel: 'mock', defaultProvider: 'mock', theme: 'dark', llmEndpoint: '', llmApiKey: '', llmModel: '' };
     return this.go.GetSettings();
+  }
+
+  async updateSetting(key: string, value: string): Promise<void> {
+    if (!this.go) return;
+    return this.go.UpdateSetting(key, value);
   }
 
   // ------------------------------------------

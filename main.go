@@ -4,8 +4,8 @@ import (
 	"embed"
 	"log"
 
-	"github.com/paulocanedo/orbit/backend/config"
-	"github.com/paulocanedo/orbit/backend/db"
+	"github.com/pauloedsr/orbit/backend/config"
+	"github.com/pauloedsr/orbit/backend/db"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"

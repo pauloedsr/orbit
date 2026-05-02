@@ -37,7 +37,7 @@ import { ChatService } from '../../services/chat.service';
       </div>
 
       <div class="sidebar-footer">
-        <button class="btn-settings" title="Configurações">
+        <button class="btn-settings" title="Configurações" (click)="chat.showSettings.set(true)">
           ⚙ Settings
         </button>
       </div>
