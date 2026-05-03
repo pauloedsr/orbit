@@ -5,16 +5,20 @@ import { SettingsComponent } from './components/settings/settings.component';
 import { ToolInteractionComponent } from './components/tool-interaction/tool-interaction.component';
 import { DeleteConfirmationDialogComponent } from './components/delete-confirmation-dialog/delete-confirmation-dialog.component';
 import { RenameConversationDialogComponent } from './components/rename-conversation-dialog/rename-conversation-dialog.component';
+import { SubAgentPanelComponent } from './components/subagent-panel/subagent-panel.component';
 import { ChatService } from './services/chat.service';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [SidebarComponent, ChatComponent, SettingsComponent, ToolInteractionComponent, DeleteConfirmationDialogComponent, RenameConversationDialogComponent],
+  imports: [SidebarComponent, ChatComponent, SettingsComponent, ToolInteractionComponent, DeleteConfirmationDialogComponent, RenameConversationDialogComponent, SubAgentPanelComponent],
   template: `
     <div class="app-shell">
       <app-sidebar />
-      <app-chat style="width: 100%;" />
+      <app-chat style="flex: 1; min-width: 0;" />
+      @if (chat.subAgentPanelState() !== 'hidden') {
+        <app-subagent-panel />
+      }
     </div>
     @if (chat.showSettings()) {
       <app-settings />

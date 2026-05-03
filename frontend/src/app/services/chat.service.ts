@@ -1,6 +1,6 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { WailsService } from './wails.service';
-import { Conversation, Message, Settings, ToolInteraction } from '../models/types';
+import { Conversation, Message, Settings, ToolInteraction, SubAgentSession, SubAgentIteration } from '../models/types';
 
 @Injectable({ providedIn: 'root' })
 export class ChatService {
@@ -16,6 +16,9 @@ export class ChatService {
   pendingInteraction = signal<ToolInteraction | null>(null);
   deleteConfirmation = signal<{ id: string; title: string } | null>(null);
   renameConversation = signal<{ id: string; currentTitle: string } | null>(null);
+  activeSubAgents = signal<Map<string, SubAgentSession>>(new Map());
+  subAgentPanelState = signal<'hidden' | 'visible' | 'fading'>('hidden');
+  private subAgentFadeTimer: ReturnType<typeof setTimeout> | null = null;
 
   activeConversation = computed(() => {
     const id = this.activeConversationId();
@@ -58,6 +61,58 @@ export class ChatService {
         toolName: data.toolName,
         details: data.details,
       });
+    });
+
+    this.wails.onEvent('subagent:start', (data: any) => {
+      this.activeSubAgents.update(m => new Map(m).set(data.id, {
+        id: data.id,
+        prompt: data.prompt,
+        model: data.model,
+        iterations: [],
+        completed: false,
+        success: false,
+      }));
+      if (this.subAgentFadeTimer) {
+        clearTimeout(this.subAgentFadeTimer);
+        this.subAgentFadeTimer = null;
+      }
+      this.subAgentPanelState.set('visible');
+    });
+
+    this.wails.onEvent('subagent:iteration', (data: any) => {
+      this.activeSubAgents.update(m => {
+        const s = m.get(data.agentId);
+        if (!s) return m;
+        const newIter: SubAgentIteration = {
+          iteration: data.iteration,
+          phase: data.phase,
+          tools: data.tools ?? [],
+        };
+        const existing = s.iterations.find(i => i.iteration === data.iteration);
+        const iterations = existing
+          ? s.iterations.map(i => i.iteration === data.iteration ? newIter : i)
+          : [...s.iterations, newIter];
+        return new Map(m).set(data.agentId, { ...s, iterations });
+      });
+    });
+
+    this.wails.onEvent('subagent:done', (data: any) => {
+      this.activeSubAgents.update(m => {
+        const s = m.get(data.agentId);
+        if (!s) return m;
+        return new Map(m).set(data.agentId, { ...s, completed: true, success: data.success });
+      });
+      const allDone = [...this.activeSubAgents().values()].every(s => s.completed);
+      if (allDone) {
+        this.subAgentFadeTimer = setTimeout(() => {
+          this.subAgentPanelState.set('fading');
+          setTimeout(() => {
+            this.subAgentPanelState.set('hidden');
+            this.activeSubAgents.set(new Map());
+            this.subAgentFadeTimer = null;
+          }, 600);
+        }, 15_000);
+      }
     });
 
     const [convs, settings] = await Promise.all([

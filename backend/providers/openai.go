@@ -24,7 +24,9 @@ func NewOpenAIProvider(name, baseURL, apiKey string) *OpenAIProvider {
 		name:    name,
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
-		client:  &http.Client{},
+		client: &http.Client{
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
 	}
 }
 
@@ -56,7 +58,7 @@ type oaiFunctionCall struct {
 
 type oaiMessage struct {
 	Role       string        `json:"role"`
-	Content    string        `json:"content"`
+	Content    *string       `json:"content"` // pointer para serializar null quando vazio
 	ToolCalls  []oaiToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
@@ -86,7 +88,8 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 
 	msgs := make([]oaiMessage, 0, len(req.Messages)+1)
 	if req.System != "" {
-		msgs = append(msgs, oaiMessage{Role: "system", Content: req.System})
+		sys := req.System
+		msgs = append(msgs, oaiMessage{Role: "system", Content: &sys})
 	}
 	for _, m := range req.Messages {
 		var tcs []oaiToolCall
@@ -99,9 +102,13 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 				})
 			}
 		}
+		var content *string
+		if m.Content != "" {
+			content = &m.Content
+		}
 		msgs = append(msgs, oaiMessage{
 			Role:       m.Role,
-			Content:    m.Content,
+			Content:    content,
 			ToolCalls:  tcs,
 			ToolCallID: m.ToolCallID,
 		})

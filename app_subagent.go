@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/pauloedsr/orbit/backend/providers"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // handleSubAgent é o handler registrado no registry para a tool run_subagent.
@@ -28,8 +30,8 @@ func (a *App) handleSubAgent(args map[string]any) string {
 	return a.runSubAgent(prompt, model, maxIter)
 }
 
-// runSubAgent executa um loop completo de raciocínio + ferramentas de forma silenciosa
-// (sem emitir eventos ao chat principal) e retorna o resultado final do agente.
+// runSubAgent executa um loop completo de raciocínio + ferramentas, emitindo
+// eventos ao frontend para exibição em tempo real no painel de sub-agentes.
 func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 	endpoint, _ := a.db.GetSetting("llm_endpoint")
 	if endpoint == "" {
@@ -38,9 +40,34 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 	apiKey, _ := a.db.GetSetting("llm_api_key")
 	p := providers.NewOpenAIProvider("openai-compat", endpoint, apiKey)
 
+	agentID := uuid.NewString()
+	runtime.EventsEmit(a.ctx, "subagent:start", map[string]any{
+		"id":     agentID,
+		"prompt": prompt,
+		"model":  model,
+	})
+
+	emitIteration := func(iter int, phase string, tools []string) {
+		runtime.EventsEmit(a.ctx, "subagent:iteration", map[string]any{
+			"agentId":   agentID,
+			"iteration": iter,
+			"phase":     phase,
+			"tools":     tools,
+		})
+	}
+
+	emitDone := func(success bool) {
+		runtime.EventsEmit(a.ctx, "subagent:done", map[string]any{
+			"agentId": agentID,
+			"success": success,
+		})
+	}
+
 	msgs := []providers.Message{{Role: "user", Content: prompt}}
 
 	for iter := 0; iter < maxIterations; iter++ {
+		emitIteration(iter+1, "thinking", []string{})
+
 		req := providers.Request{
 			Model:    model,
 			Messages: msgs,
@@ -75,23 +102,27 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 		}
 
 		if err := <-errCh; err != nil {
+			emitDone(false)
 			return fmt.Sprintf("Erro no sub-agente (iteração %d): %v", iter+1, err)
 		}
 
 		// Sem tool calls — sub-agente finalizou
 		if len(activeToolCalls) == 0 {
+			emitDone(true)
 			return buf.String()
 		}
 
-		// Constrói a lista de tool calls na ordem de índice
+		// Coleta nomes das tools na ordem de índice
 		tcs := make([]providers.ToolCall, 0, len(activeToolCalls))
+		toolNames := make([]string, 0, len(activeToolCalls))
 		for i := 0; i < len(activeToolCalls); i++ {
 			if tc, ok := activeToolCalls[i]; ok {
 				tcs = append(tcs, *tc)
+				toolNames = append(toolNames, tc.Name)
 			}
 		}
-		tcsJSON, _ := json.Marshal(tcs)
-		_ = tcsJSON
+
+		emitIteration(iter+1, "tool-calling", toolNames)
 
 		msgs = append(msgs, providers.Message{
 			Role:      "assistant",
@@ -112,8 +143,11 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 				ToolCallID: tc.ID,
 			})
 		}
+
+		emitIteration(iter+1, "done", toolNames)
 	}
 
+	emitDone(false)
 	return fmt.Sprintf("Sub-agente atingiu o limite de %d iterações sem concluir.", maxIterations)
 }
 

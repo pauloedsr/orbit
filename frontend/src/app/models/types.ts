@@ -48,3 +48,21 @@ export interface ToolInteraction {
   toolName?: string;
   details?: string;
 }
+
+// Painel de sub-agentes em tempo real
+export type SubAgentPhase = 'thinking' | 'tool-calling' | 'done';
+
+export interface SubAgentIteration {
+  iteration: number;
+  phase: SubAgentPhase;
+  tools: string[];
+}
+
+export interface SubAgentSession {
+  id: string;
+  prompt: string;
+  model: string;
+  iterations: SubAgentIteration[];
+  completed: boolean;
+  success: boolean;
+}
