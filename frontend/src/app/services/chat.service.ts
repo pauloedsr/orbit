@@ -1,6 +1,6 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { WailsService } from './wails.service';
-import { Conversation, Message, Settings } from '../models/types';
+import { Conversation, Message, Settings, ToolInteraction } from '../models/types';
 
 @Injectable({ providedIn: 'root' })
 export class ChatService {
@@ -13,6 +13,7 @@ export class ChatService {
   showSettings = signal(false);
   error = signal<string | null>(null);
   settings = signal<Settings>({ defaultModel: '', defaultProvider: '', theme: 'dark', llmEndpoint: '', llmApiKey: '', llmModel: '' });
+  pendingInteraction = signal<ToolInteraction | null>(null);
 
   activeConversation = computed(() => {
     const id = this.activeConversationId();
@@ -37,6 +38,24 @@ export class ChatService {
       this.messages.update(msgs => [...msgs, this.formatMessage(msg)]);
       this.isStreaming.set(false);
       this.streamingContent.set('');
+    });
+
+    this.wails.onEvent('tool:ask', (data: any) => {
+      this.pendingInteraction.set({
+        id: data.id,
+        type: data.type === 'choice' ? 'ask_choice' : 'ask_text',
+        question: data.question,
+        choices: data.choices,
+      });
+    });
+
+    this.wails.onEvent('tool:confirm', (data: any) => {
+      this.pendingInteraction.set({
+        id: data.id,
+        type: 'confirm',
+        toolName: data.toolName,
+        details: data.details,
+      });
     });
 
     const [convs, settings] = await Promise.all([
@@ -98,6 +117,11 @@ export class ChatService {
       this.streamingContent.set('');
       this.error.set(typeof err === 'string' ? err : (err?.message ?? 'Erro desconhecido'));
     }
+  }
+
+  async submitInteraction(id: string, response: string) {
+    this.pendingInteraction.set(null);
+    await this.wails.submitToolResponse(id, response);
   }
 
   async deleteConversation(id: string) {

@@ -5,24 +5,54 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pauloedsr/orbit/backend/config"
 	"github.com/pauloedsr/orbit/backend/db"
 	"github.com/pauloedsr/orbit/backend/providers"
+	"github.com/pauloedsr/orbit/backend/tools"
+	"github.com/pauloedsr/orbit/backend/tools/filesystem"
+	"github.com/pauloedsr/orbit/backend/tools/interaction"
+	"github.com/pauloedsr/orbit/backend/tools/shell"
+	"github.com/pauloedsr/orbit/backend/tools/subagent"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App é o struct principal exposto ao frontend via Wails bindings.
 // Cada método público vira uma função JS acessível em window.go.main.App
 type App struct {
-	ctx context.Context
-	db  *db.Database
-	cfg *config.Config
+	ctx   context.Context
+	db    *db.Database
+	cfg   *config.Config
+	tools *tools.Registry
+
+	// Interação bloqueante com o frontend (ask / confirm)
+	pending   map[string]chan string
+	pendingMu sync.Mutex
+
+	// Allowlist de tools confirmadas com "sempre permitir"
+	allowlist   map[string]struct{}
+	allowlistMu sync.RWMutex
 }
 
 func NewApp(database *db.Database, cfg *config.Config) *App {
-	return &App{db: database, cfg: cfg}
+	a := &App{
+		db:        database,
+		cfg:       cfg,
+		pending:   make(map[string]chan string),
+		allowlist: make(map[string]struct{}),
+	}
+
+	reg := tools.New()
+	filesystem.Register(reg)
+	shell.Register(reg)
+	reg.Register(interaction.AskTextDef, a.handleAskText)
+	reg.Register(interaction.AskChoiceDef, a.handleAskChoice)
+	reg.Register(subagent.Def, a.handleSubAgent)
+	a.tools = reg
+
+	return a
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -137,7 +167,7 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 	p := providers.NewOpenAIProvider("openai-compat", endpoint, apiKey)
 	var finalMsg db.Message
 
-	// Loop principal de Tool Calling (Fase 3)
+	// Loop principal de Tool Calling
 	for {
 		dbMsgs, err := a.db.GetMessages(conversationID)
 		if err != nil {
@@ -147,7 +177,7 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 		// 4. Sinaliza "pensando" para a UI
 		runtime.EventsEmit(a.ctx, "chat:thinking", conversationID)
 
-		// 5. Monta payload mapeando tools armazenados em string JSON
+		// 5. Monta payload mapeando tool_calls armazenados em JSON
 		provMsgs := make([]providers.Message, 0, len(dbMsgs))
 		for _, m := range dbMsgs {
 			var tcs []providers.ToolCall
@@ -165,7 +195,7 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 		req := providers.Request{
 			Model:    model,
 			Messages: provMsgs,
-			Tools:    providers.GetSystemTools(), // Injetando Tools do gateway (Fase 3)
+			Tools:    a.tools.Definitions(),
 			Stream:   true,
 		}
 
@@ -220,7 +250,7 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			}
 			runtime.EventsEmit(a.ctx, "chat:message", toMsgDTO(msg))
 
-			// Executa ferramentas nativamente e injeta as respostas na conversa
+			// Executa ferramentas e injeta as respostas na conversa
 			for _, tc := range tcs {
 				result := a.executeToolCall(tc)
 				toolMsg, err := a.db.AddMessage(conversationID, "tool", result, model, "", tc.ID)
@@ -230,7 +260,6 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 				runtime.EventsEmit(a.ctx, "chat:message", toMsgDTO(toolMsg))
 			}
 
-			// Reinicia o Loop enviando a resposta do ambiente para o LLM
 			continue
 		}
 
@@ -248,60 +277,21 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Tool Execution Logic
+// Tool Execution
 // ---------------------------------------------------------------------------
 
 func (a *App) executeToolCall(tc providers.ToolCall) string {
-	fmt.Printf("[Orbit] Executando Tool: '%s' | Buffer JSON: %s\n", tc.Name, tc.Arguments)
-	var args map[string]interface{}
+	fmt.Printf("[Orbit] Tool: '%s' | Args: %s\n", tc.Name, tc.Arguments)
+	var args map[string]any
 	if tc.Arguments != "" {
 		if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
-			return fmt.Errorf("Erro ao parsear argumentos JSON: %v", err).Error()
+			return fmt.Sprintf("Erro ao parsear argumentos JSON: %v", err)
 		}
 	}
-
-	switch tc.Name {
-	case "read_file":
-		path, _ := args["path"].(string)
-		res, err := providers.ReadFile(path)
-		if err != nil {
-			return err.Error()
-		}
-		return res
-	case "write_file":
-		path, _ := args["path"].(string)
-		content, _ := args["content"].(string)
-		err := providers.WriteFile(path, content)
-		if err != nil {
-			return err.Error()
-		}
-		return fmt.Sprintf("Arquivo %s escrito com sucesso.", path)
-	case "edit_file":
-		path, _ := args["path"].(string)
-		oldText, _ := args["old_text"].(string)
-		newText, _ := args["new_text"].(string)
-		err := providers.EditFile(path, oldText, newText)
-		if err != nil {
-			return err.Error()
-		}
-		return fmt.Sprintf("Arquivo %s editado com sucesso.", path)
-	case "search_files":
-		pattern, _ := args["pattern"].(string)
-		res, err := providers.SearchFiles(pattern)
-		if err != nil {
-			return err.Error()
-		}
-		return strings.Join(res, "\n")
-	case "run_shell":
-		cmd, _ := args["command"].(string)
-		res, err := providers.RunShell(cmd)
-		if err != nil {
-			return fmt.Sprintf("Erro: %v\nSaída: %s", err, res)
-		}
-		return res
-	default:
-		return fmt.Sprintf("Ferramenta desconhecida ou não implementada: %s", tc.Name)
+	if denied := a.checkConfirm(tc.Name, args); denied != "" {
+		return denied
 	}
+	return a.tools.Dispatch(tc.Name, args)
 }
 
 // ---------------------------------------------------------------------------
@@ -339,7 +329,7 @@ func (a *App) UpdateSetting(key, value string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Health check / IPC proof
+// Health check
 // ---------------------------------------------------------------------------
 
 func (a *App) Ping() string {

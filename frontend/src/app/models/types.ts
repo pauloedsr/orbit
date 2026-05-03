@@ -37,3 +37,13 @@ export interface ChatState {
   isStreaming: boolean;
   streamBuffer: string;
 }
+
+// Interação bloqueante com o agente (ask / confirm)
+export interface ToolInteraction {
+  id: string;
+  type: 'ask_text' | 'ask_choice' | 'confirm';
+  question?: string;
+  choices?: string[];
+  toolName?: string;
+  details?: string;
+}

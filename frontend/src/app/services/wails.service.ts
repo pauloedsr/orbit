@@ -81,6 +81,11 @@ export class WailsService {
     return this.go.UpdateSetting(key, value);
   }
 
+  async submitToolResponse(requestId: string, response: string): Promise<void> {
+    if (!this.go) return;
+    return this.go.SubmitToolResponse(requestId, response);
+  }
+
   // ------------------------------------------
   // Wails Events (streaming, tool status, etc.)
   // ------------------------------------------
