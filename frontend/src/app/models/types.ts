@@ -7,6 +7,7 @@ export interface Conversation {
   title: string;
   model: string;
   provider: string;
+  pinned: boolean;
   createdAt: string;
   updatedAt: string;
 }

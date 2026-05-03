@@ -33,7 +33,7 @@ import { WailsService } from '../../services/wails.service';
       <div class="messages-area" #messagesArea>
         @if (!chat.activeConversationId()) {
           <div class="welcome">
-            <div class="welcome-icon">◉</div>
+            <div class="welcome-icon"><img src="assets/icon.png" alt="Orbit" /></div>
             <h2>Orbit</h2>
             <p>CLI power, rich interface.</p>
             <p class="hint mono">Ctrl+N para nova conversa</p>
@@ -172,9 +172,12 @@ import { WailsService } from '../../services/wails.service';
     }
 
     .welcome-icon {
-      font-size: 48px;
       color: var(--accent);
-      margin-bottom: 8px;
+      height: 60px;
+      img {
+        width: 50px;
+        height: 50px;
+      }
     }
 
     .welcome h2 {
@@ -381,6 +384,6 @@ export class ChatComponent implements AfterViewChecked {
     try {
       const el = this.messagesArea?.nativeElement;
       if (el) el.scrollTop = el.scrollHeight;
-    } catch {}
+    } catch { }
   }
 }

@@ -53,6 +53,16 @@ export class WailsService {
     return this.go.DeleteConversation(id);
   }
 
+  async updateConversation(id: string, title: string): Promise<void> {
+    if (!this.go) return;
+    return this.go.UpdateConversation(id, title);
+  }
+
+  async setConversationPinned(id: string, pinned: boolean): Promise<void> {
+    if (!this.go) return;
+    return this.go.SetConversationPinned(id, pinned);
+  }
+
   // ------------------------------------------
   // Messages
   // ------------------------------------------
@@ -110,6 +120,7 @@ function mockConversation(title: string): Conversation {
     title,
     model: 'mock-model',
     provider: 'mock',
+    pinned: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

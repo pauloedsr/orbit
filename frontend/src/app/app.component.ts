@@ -3,12 +3,14 @@ import { SidebarComponent } from './components/sidebar/sidebar.component';
 import { ChatComponent } from './components/chat/chat.component';
 import { SettingsComponent } from './components/settings/settings.component';
 import { ToolInteractionComponent } from './components/tool-interaction/tool-interaction.component';
+import { DeleteConfirmationDialogComponent } from './components/delete-confirmation-dialog/delete-confirmation-dialog.component';
+import { RenameConversationDialogComponent } from './components/rename-conversation-dialog/rename-conversation-dialog.component';
 import { ChatService } from './services/chat.service';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [SidebarComponent, ChatComponent, SettingsComponent, ToolInteractionComponent],
+  imports: [SidebarComponent, ChatComponent, SettingsComponent, ToolInteractionComponent, DeleteConfirmationDialogComponent, RenameConversationDialogComponent],
   template: `
     <div class="app-shell">
       <app-sidebar />
@@ -18,6 +20,8 @@ import { ChatService } from './services/chat.service';
       <app-settings />
     }
     <app-tool-interaction />
+    <app-delete-confirmation-dialog />
+    <app-rename-conversation-dialog />
   `,
   styles: [`
     :host {

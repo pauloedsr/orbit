@@ -21,6 +21,7 @@ type Conversation struct {
 	Title     string
 	Model     string
 	Provider  string
+	Pinned    bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -102,12 +103,13 @@ func (d *Database) migrate() error {
 		)`,
 		`ALTER TABLE messages ADD COLUMN tool_calls TEXT DEFAULT ''`,
 		`ALTER TABLE messages ADD COLUMN tool_call_id TEXT DEFAULT ''`,
+		`ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`,
 	}
 
 	for _, m := range migrations {
 		if _, err := d.conn.Exec(m); err != nil {
 			// Ignora o erro intencional caso a coluna já tenha sido criada em dev anterior
-			if !strings.Contains(err.Error(), "duplicate column name") {
+			if !strings.Contains(err.Error(), "duplicate column name") && !strings.Contains(err.Error(), "already exists") {
 				return fmt.Errorf("exec migration: %w", err)
 			}
 		}
@@ -136,7 +138,7 @@ func (d *Database) CreateConversation(title, model, provider string) (Conversati
 }
 
 func (d *Database) ListConversations() ([]Conversation, error) {
-	rows, err := d.conn.Query(`SELECT id, title, model, provider, created_at, updated_at FROM conversations ORDER BY updated_at DESC`)
+	rows, err := d.conn.Query(`SELECT id, title, model, provider, pinned, created_at, updated_at FROM conversations ORDER BY pinned DESC, updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -145,9 +147,11 @@ func (d *Database) ListConversations() ([]Conversation, error) {
 	var out []Conversation
 	for rows.Next() {
 		var c Conversation
-		if err := rows.Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var pinnedInt int
+		if err := rows.Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &pinnedInt, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
+		c.Pinned = pinnedInt != 0
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -155,14 +159,36 @@ func (d *Database) ListConversations() ([]Conversation, error) {
 
 func (d *Database) GetConversation(id string) (Conversation, error) {
 	var c Conversation
+	var pinnedInt int
 	err := d.conn.QueryRow(
-		`SELECT id, title, model, provider, created_at, updated_at FROM conversations WHERE id = ?`, id,
-	).Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &c.CreatedAt, &c.UpdatedAt)
+		`SELECT id, title, model, provider, pinned, created_at, updated_at FROM conversations WHERE id = ?`, id,
+	).Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &pinnedInt, &c.CreatedAt, &c.UpdatedAt)
+	c.Pinned = pinnedInt != 0
 	return c, err
 }
 
 func (d *Database) DeleteConversation(id string) error {
 	_, err := d.conn.Exec(`DELETE FROM conversations WHERE id = ?`, id)
+	return err
+}
+
+func (d *Database) UpdateConversation(id, title string) error {
+	_, err := d.conn.Exec(
+		`UPDATE conversations SET title = ?, updated_at = datetime('now') WHERE id = ?`,
+		title, id,
+	)
+	return err
+}
+
+func (d *Database) SetConversationPinned(id string, pinned bool) error {
+	pinnedInt := 0
+	if pinned {
+		pinnedInt = 1
+	}
+	_, err := d.conn.Exec(
+		`UPDATE conversations SET pinned = ?, updated_at = datetime('now') WHERE id = ?`,
+		pinnedInt, id,
+	)
 	return err
 }
 

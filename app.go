@@ -72,6 +72,7 @@ type ConversationDTO struct {
 	Title     string `json:"title"`
 	Model     string `json:"model"`
 	Provider  string `json:"provider"`
+	Pinned    bool   `json:"pinned"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 }
@@ -98,6 +99,14 @@ func (a *App) ListConversations() ([]ConversationDTO, error) {
 
 func (a *App) DeleteConversation(id string) error {
 	return a.db.DeleteConversation(id)
+}
+
+func (a *App) UpdateConversation(id, title string) error {
+	return a.db.UpdateConversation(id, title)
+}
+
+func (a *App) SetConversationPinned(id string, pinned bool) error {
+	return a.db.SetConversationPinned(id, pinned)
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +355,7 @@ func toConvDTO(c db.Conversation) ConversationDTO {
 		Title:     c.Title,
 		Model:     c.Model,
 		Provider:  c.Provider,
+		Pinned:    c.Pinned,
 		CreatedAt: c.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
 	}

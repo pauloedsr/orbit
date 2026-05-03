@@ -14,6 +14,8 @@ export class ChatService {
   error = signal<string | null>(null);
   settings = signal<Settings>({ defaultModel: '', defaultProvider: '', theme: 'dark', llmEndpoint: '', llmApiKey: '', llmModel: '' });
   pendingInteraction = signal<ToolInteraction | null>(null);
+  deleteConfirmation = signal<{ id: string; title: string } | null>(null);
+  renameConversation = signal<{ id: string; currentTitle: string } | null>(null);
 
   activeConversation = computed(() => {
     const id = this.activeConversationId();
@@ -122,6 +124,41 @@ export class ChatService {
   async submitInteraction(id: string, response: string) {
     this.pendingInteraction.set(null);
     await this.wails.submitToolResponse(id, response);
+  }
+
+  async updateConversationTitle(id: string, newTitle: string) {
+    if (!newTitle.trim()) return;
+    try {
+      await this.wails.updateConversation(id, newTitle);
+      this.conversations.update(c =>
+        c.map(conv => conv.id === id ? { ...conv, title: newTitle } : conv)
+      );
+    } catch (err: any) {
+      console.error('Erro ao renomear conversa:', err);
+      throw err;
+    }
+  }
+
+  async toggleConversationPinned(id: string) {
+    try {
+      const conv = this.conversations().find(c => c.id === id);
+      if (!conv) return;
+      const newPinnedState = !conv.pinned;
+      await this.wails.setConversationPinned(id, newPinnedState);
+      this.conversations.update(c =>
+        c.map(conversation =>
+          conversation.id === id ? { ...conversation, pinned: newPinnedState } : conversation
+        ).sort((a, b) => {
+          if (a.pinned === b.pinned) {
+            return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          }
+          return a.pinned ? -1 : 1;
+        })
+      );
+    } catch (err: any) {
+      console.error('Erro ao fixar/desafixar conversa:', err);
+      throw err;
+    }
   }
 
   async deleteConversation(id: string) {
