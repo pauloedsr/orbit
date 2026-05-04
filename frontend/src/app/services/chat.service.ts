@@ -1,6 +1,9 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { WailsService } from './wails.service';
-import { Conversation, Message, Settings, ToolInteraction, SubAgentSession, SubAgentIteration } from '../models/types';
+import {
+  Conversation, Message, Settings, ToolInteraction, SubAgentSession, SubAgentIteration,
+  ChatThinkingPayload, ChatChunkPayload, ChatMessagePayload, ChatStoppedPayload,
+} from '../models/types';
 
 @Injectable({ providedIn: 'root' })
 export class ChatService {
@@ -8,9 +11,16 @@ export class ChatService {
   activeConversationId = signal<string | null>(null);
   messages = signal<Message[]>([]);
   isLoading = signal(false);
-  isStreaming = signal(false);
-  streamingContent = signal('');
+  private _streamingStates = signal<Map<string, { content: string }>>(new Map());
   showSettings = signal(false);
+
+  isStreamingFor(id: string): boolean {
+    return this._streamingStates().has(id);
+  }
+
+  streamingContentFor(id: string): string {
+    return this._streamingStates().get(id)?.content ?? '';
+  }
   error = signal<string | null>(null);
   settings = signal<Settings>({ defaultModel: '', defaultProvider: '', theme: 'dark', llmEndpoint: '', llmApiKey: '', llmModel: '' });
   pendingInteraction = signal<ToolInteraction | null>(null);
@@ -30,19 +40,33 @@ export class ChatService {
   }
 
   private async init() {
-    this.wails.onEvent('chat:thinking', () => {
-      this.isStreaming.set(true);
-      this.streamingContent.set('');
+    this.wails.onEvent('chat:thinking', (data: ChatThinkingPayload) => {
+      this._streamingStates.update(m => new Map(m).set(data.conversationId, { content: '' }));
     });
 
-    this.wails.onEvent('chat:chunk', (text: string) => {
-      this.streamingContent.update(c => c + text);
+    this.wails.onEvent('chat:chunk', (data: ChatChunkPayload) => {
+      this._streamingStates.update(m => {
+        const prev = m.get(data.conversationId)?.content ?? '';
+        return new Map(m).set(data.conversationId, { content: prev + data.text });
+      });
     });
 
-    this.wails.onEvent('chat:message', (msg: Message) => {
-      this.messages.update(msgs => [...msgs, this.formatMessage(msg)]);
-      this.isStreaming.set(false);
-      this.streamingContent.set('');
+    this.wails.onEvent('chat:message', (data: ChatMessagePayload) => {
+      const msg = this.formatMessage(data.message);
+      if (msg.conversationId === this.activeConversationId()) {
+        this.messages.update(msgs => [...msgs, msg]);
+      }
+      this._streamingStates.update(m => { const n = new Map(m); n.delete(data.conversationId); return n; });
+    });
+
+    this.wails.onEvent('chat:stopped', (data: ChatStoppedPayload) => {
+      if (data.message) {
+        const msg = this.formatMessage(data.message);
+        if (msg.conversationId === this.activeConversationId()) {
+          this.messages.update(msgs => [...msgs, msg]);
+        }
+      }
+      this._streamingStates.update(m => { const n = new Map(m); n.delete(data.conversationId); return n; });
     });
 
     this.wails.onEvent('tool:ask', (data: any) => {
@@ -170,8 +194,7 @@ export class ChatService {
     try {
       await this.wails.sendMessage(convId, content.trim());
     } catch (err: any) {
-      this.isStreaming.set(false);
-      this.streamingContent.set('');
+      this._streamingStates.update(m => { const n = new Map(m); n.delete(convId); return n; });
       this.error.set(typeof err === 'string' ? err : (err?.message ?? 'Erro desconhecido'));
     }
   }

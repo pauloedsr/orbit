@@ -66,3 +66,9 @@ export interface SubAgentSession {
   completed: boolean;
   success: boolean;
 }
+
+// Payloads dos eventos de streaming emitidos pelo backend
+export interface ChatThinkingPayload { conversationId: string }
+export interface ChatChunkPayload    { conversationId: string; text: string }
+export interface ChatMessagePayload  { conversationId: string; message: Message }
+export interface ChatStoppedPayload  { conversationId: string; message: Message | null }

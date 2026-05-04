@@ -28,7 +28,9 @@ import { ChatService } from '../../services/chat.service';
             >
               <div class="conv-title-row">
                 <span class="conv-title">{{ conv.title }}</span>
-                @if (conv.pinned) {
+                @if (chat.isStreamingFor(conv.id)) {
+                  <span class="streaming-dot" title="Processando..."></span>
+                } @else if (conv.pinned) {
                   <span class="pin-icon">📌</span>
                 }
               </div>
@@ -198,6 +200,20 @@ import { ChatService } from '../../services/chat.service';
       font-size: 12px;
       flex-shrink: 0;
       opacity: 0.8;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    .streaming-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+      animation: pulse 1.2s ease-in-out infinite;
     }
 
     .conv-menu-container {

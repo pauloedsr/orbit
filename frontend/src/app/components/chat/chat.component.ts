@@ -57,11 +57,11 @@ import { WailsService } from '../../services/wails.service';
             </div>
           }
 
-          @if (chat.isStreaming()) {
+          @if (chat.isStreamingFor(chat.activeConversationId()!)) {
             <div class="message message-assistant">
               <div class="message-role mono">◉ assistant</div>
-              @if (chat.streamingContent()) {
-                <markdown class="message-content" [data]="chat.streamingContent()" />
+              @if (chat.streamingContentFor(chat.activeConversationId()!)) {
+                <markdown class="message-content" [data]="chat.streamingContentFor(chat.activeConversationId()!)" />
               } @else {
                 <div class="message-content"><span class="cursor-blink">▊</span></div>
               }
@@ -80,15 +80,17 @@ import { WailsService } from '../../services/wails.service';
             (keydown)="onKeydown($event)"
             placeholder="Mensagem... (Enter para enviar, Shift+Enter para nova linha)"
             rows="1"
-            [disabled]="chat.isStreaming()"
+            [disabled]="chat.isStreamingFor(chat.activeConversationId()!)"
           ></textarea>
-          <button
-            class="btn-send"
-            (click)="send()"
-            [disabled]="!inputText.trim() || chat.isStreaming()"
-          >
-            ↵
-          </button>
+          @if (chat.isStreamingFor(chat.activeConversationId()!)) {
+            <button class="btn-stop" (click)="stop()" title="Parar geração">■</button>
+          } @else {
+            <button
+              class="btn-send"
+              (click)="send()"
+              [disabled]="!inputText.trim()"
+            >↵</button>
+          }
         </div>
       }
     </div>
@@ -325,6 +327,27 @@ import { WailsService } from '../../services/wails.service';
       opacity: 0.3;
       cursor: not-allowed;
     }
+
+    .btn-stop {
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--error);
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: var(--error);
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all var(--transition-fast);
+      flex-shrink: 0;
+    }
+
+    .btn-stop:hover {
+      background: var(--error);
+      color: #fff;
+    }
   `]
 })
 export class ChatComponent implements AfterViewChecked {
@@ -360,7 +383,8 @@ export class ChatComponent implements AfterViewChecked {
   }
 
   async send() {
-    if (!this.inputText.trim() || this.chat.isStreaming()) return;
+    const convId = this.chat.activeConversationId();
+    if (!this.inputText.trim() || !convId || this.chat.isStreamingFor(convId)) return;
 
     const content = this.inputText;
     this.inputText = '';
@@ -369,8 +393,12 @@ export class ChatComponent implements AfterViewChecked {
     await this.chat.sendMessage(content);
     this.shouldScroll = true;
 
-    // Refoca o input
     setTimeout(() => this.inputField?.nativeElement?.focus(), 50);
+  }
+
+  stop() {
+    const convId = this.chat.activeConversationId();
+    if (convId) this.wails.stopStream(convId);
   }
 
   onKeydown(event: KeyboardEvent) {

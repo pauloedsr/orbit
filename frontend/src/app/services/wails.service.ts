@@ -96,6 +96,11 @@ export class WailsService {
     return this.go.SubmitToolResponse(requestId, response);
   }
 
+  async stopStream(conversationId: string): Promise<void> {
+    if (!this.go) return;
+    return this.go.StopStream(conversationId);
+  }
+
   // ------------------------------------------
   // Wails Events (streaming, tool status, etc.)
   // ------------------------------------------

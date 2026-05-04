@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -34,14 +35,19 @@ type App struct {
 	// Allowlist de tools confirmadas com "sempre permitir"
 	allowlist   map[string]struct{}
 	allowlistMu sync.RWMutex
+
+	// Cancelamento de stream por conversa (botão Stop)
+	streamCancels   map[string]context.CancelFunc
+	streamCancelsMu sync.Mutex
 }
 
 func NewApp(database *db.Database, cfg *config.Config) *App {
 	a := &App{
-		db:        database,
-		cfg:       cfg,
-		pending:   make(map[string]chan string),
-		allowlist: make(map[string]struct{}),
+		db:           database,
+		cfg:          cfg,
+		pending:      make(map[string]chan string),
+		allowlist:    make(map[string]struct{}),
+		streamCancels: make(map[string]context.CancelFunc),
 	}
 
 	reg := tools.New()
@@ -173,6 +179,18 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 		model = m
 	}
 
+	// Contexto cancelável por conversa — permite botão Stop sem afetar outras conversas
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.streamCancelsMu.Lock()
+	a.streamCancels[conversationID] = cancel
+	a.streamCancelsMu.Unlock()
+	defer func() {
+		cancel()
+		a.streamCancelsMu.Lock()
+		delete(a.streamCancels, conversationID)
+		a.streamCancelsMu.Unlock()
+	}()
+
 	p := providers.NewOpenAIProvider("openai-compat", endpoint, apiKey)
 	var finalMsg db.Message
 
@@ -184,7 +202,9 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 		}
 
 		// 4. Sinaliza "pensando" para a UI
-		runtime.EventsEmit(a.ctx, "chat:thinking", conversationID)
+		runtime.EventsEmit(a.ctx, "chat:thinking", map[string]any{
+			"conversationId": conversationID,
+		})
 
 		// 5. Monta payload mapeando tool_calls armazenados em JSON
 		provMsgs := make([]providers.Message, 0, len(dbMsgs))
@@ -208,10 +228,10 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			Stream:   true,
 		}
 
-		// 6. Streaming — corre em goroutine
+		// 6. Streaming — corre em goroutine com contexto cancelável
 		eventCh := make(chan providers.Event, 64)
 		errCh := make(chan error, 1)
-		go func() { errCh <- p.Stream(a.ctx, req, eventCh) }()
+		go func() { errCh <- p.Stream(ctx, req, eventCh) }()
 
 		var buf strings.Builder
 		activeToolCalls := make(map[int]*providers.ToolCall)
@@ -220,7 +240,10 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			switch evt.Type {
 			case providers.EventTextDelta:
 				buf.WriteString(evt.Text)
-				runtime.EventsEmit(a.ctx, "chat:chunk", evt.Text)
+				runtime.EventsEmit(a.ctx, "chat:chunk", map[string]any{
+					"conversationId": conversationID,
+					"text":           evt.Text,
+				})
 			case providers.EventToolCallStart:
 				if activeToolCalls[evt.ToolCall.Index] == nil {
 					activeToolCalls[evt.ToolCall.Index] = &providers.ToolCall{
@@ -228,18 +251,40 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 						Name: evt.ToolCall.Name,
 					}
 					msg := fmt.Sprintf("\n\n⚙️ Chamando ferramenta: `%s`\nParâmetros: ", evt.ToolCall.Name)
-					runtime.EventsEmit(a.ctx, "chat:chunk", msg)
+					runtime.EventsEmit(a.ctx, "chat:chunk", map[string]any{
+						"conversationId": conversationID,
+						"text":           msg,
+					})
 				}
 			case providers.EventToolCallDelta:
 				if activeToolCalls[evt.ToolCall.Index] == nil {
 					activeToolCalls[evt.ToolCall.Index] = &providers.ToolCall{}
 				}
 				activeToolCalls[evt.ToolCall.Index].Arguments += evt.ToolCall.ArgDelta
-				runtime.EventsEmit(a.ctx, "chat:chunk", evt.ToolCall.ArgDelta)
+				runtime.EventsEmit(a.ctx, "chat:chunk", map[string]any{
+					"conversationId": conversationID,
+					"text":           evt.ToolCall.ArgDelta,
+				})
 			case providers.EventError:
 			}
 		}
 		if err := <-errCh; err != nil {
+			if errors.Is(err, context.Canceled) {
+				// Salva conteúdo parcial acumulado antes do stop
+				if buf.Len() > 0 {
+					partialMsg, _ := a.db.AddMessage(conversationID, "assistant", buf.String(), model, "", "")
+					runtime.EventsEmit(a.ctx, "chat:stopped", map[string]any{
+						"conversationId": conversationID,
+						"message":        toMsgDTO(partialMsg),
+					})
+				} else {
+					runtime.EventsEmit(a.ctx, "chat:stopped", map[string]any{
+						"conversationId": conversationID,
+						"message":        nil,
+					})
+				}
+				return MessageDTO{}, nil
+			}
 			return MessageDTO{}, fmt.Errorf("stream: %w", err)
 		}
 
@@ -257,7 +302,10 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			if err != nil {
 				return MessageDTO{}, fmt.Errorf("save assistant tool msg: %w", err)
 			}
-			runtime.EventsEmit(a.ctx, "chat:message", toMsgDTO(msg))
+			runtime.EventsEmit(a.ctx, "chat:message", map[string]any{
+				"conversationId": conversationID,
+				"message":        toMsgDTO(msg),
+			})
 
 			// Executa ferramentas e injeta as respostas na conversa
 			for _, tc := range tcs {
@@ -266,7 +314,10 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 				if err != nil {
 					return MessageDTO{}, fmt.Errorf("save tool result msg: %w", err)
 				}
-				runtime.EventsEmit(a.ctx, "chat:message", toMsgDTO(toolMsg))
+				runtime.EventsEmit(a.ctx, "chat:message", map[string]any{
+					"conversationId": conversationID,
+					"message":        toMsgDTO(toolMsg),
+				})
 			}
 
 			continue
@@ -278,11 +329,22 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			return MessageDTO{}, fmt.Errorf("save assistant msg: %w", err)
 		}
 		finalMsg = msg
-		runtime.EventsEmit(a.ctx, "chat:message", toMsgDTO(finalMsg))
+		runtime.EventsEmit(a.ctx, "chat:message", map[string]any{
+			"conversationId": conversationID,
+			"message":        toMsgDTO(finalMsg),
+		})
 		break
 	}
 
 	return toMsgDTO(finalMsg), nil
+}
+
+func (a *App) StopStream(conversationID string) {
+	a.streamCancelsMu.Lock()
+	defer a.streamCancelsMu.Unlock()
+	if cancel, ok := a.streamCancels[conversationID]; ok {
+		cancel()
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -96,8 +97,8 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 		if len(m.ToolCalls) > 0 {
 			for _, tc := range m.ToolCalls {
 				tcs = append(tcs, oaiToolCall{
-					ID:       tc.ID,
-					Type:     "function",
+					ID:   tc.ID,
+					Type: "function",
 					Function: &oaiFunctionCall{Name: tc.Name, Arguments: tc.Arguments},
 				})
 			}
@@ -139,9 +140,10 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 		return err
 	}
 
+	fmt.Printf("[Orbit] → POST %s\n%s\n", p.baseURL, string(body))
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		p.baseURL, bytes.NewReader(body))
-	// p.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		out <- Event{Type: EventError, Error: err}
 		return err
@@ -160,7 +162,9 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("provider HTTP %d", resp.StatusCode)
+		errBody, _ := io.ReadAll(resp.Body)
+		fmt.Printf("[Orbit] ← HTTP %d: %s\n", resp.StatusCode, string(errBody))
+		err := fmt.Errorf("provider HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
 		out <- Event{Type: EventError, Error: err}
 		return err
 	}
