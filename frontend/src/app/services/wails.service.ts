@@ -1,5 +1,5 @@
 import { Injectable, NgZone } from '@angular/core';
-import { Conversation, Message, Settings } from '../models/types';
+import { Conversation, ConversationMode, Message, Settings } from '../models/types';
 
 /**
  * WailsService encapsula todas as chamadas ao backend Go.
@@ -61,6 +61,16 @@ export class WailsService {
   async setConversationPinned(id: string, pinned: boolean): Promise<void> {
     if (!this.go) return;
     return this.go.SetConversationPinned(id, pinned);
+  }
+
+  async setConversationMode(id: string, mode: ConversationMode): Promise<void> {
+    if (!this.go) return;
+    return this.go.SetConversationMode(id, mode);
+  }
+
+  async startPlanImplementation(id: string): Promise<void> {
+    if (!this.go) return;
+    return this.go.StartPlanImplementation(id);
   }
 
   // ------------------------------------------
@@ -126,6 +136,8 @@ function mockConversation(title: string): Conversation {
     model: 'mock-model',
     provider: 'mock',
     pinned: false,
+    mode: 'edit',
+    planPhase: 'planning',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

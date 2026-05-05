@@ -43,10 +43,10 @@ type App struct {
 
 func NewApp(database *db.Database, cfg *config.Config) *App {
 	a := &App{
-		db:           database,
-		cfg:          cfg,
-		pending:      make(map[string]chan string),
-		allowlist:    make(map[string]struct{}),
+		db:            database,
+		cfg:           cfg,
+		pending:       make(map[string]chan string),
+		allowlist:     make(map[string]struct{}),
 		streamCancels: make(map[string]context.CancelFunc),
 	}
 
@@ -79,6 +79,8 @@ type ConversationDTO struct {
 	Model     string `json:"model"`
 	Provider  string `json:"provider"`
 	Pinned    bool   `json:"pinned"`
+	Mode      string `json:"mode"`
+	PlanPhase string `json:"planPhase"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 }
@@ -113,6 +115,15 @@ func (a *App) UpdateConversation(id, title string) error {
 
 func (a *App) SetConversationPinned(id string, pinned bool) error {
 	return a.db.SetConversationPinned(id, pinned)
+}
+
+func (a *App) SetConversationMode(id, mode string) error {
+	// Resets plan_phase to 'planning' whenever mode changes
+	return a.db.SetConversationMode(id, mode, "planning")
+}
+
+func (a *App) StartPlanImplementation(id string) error {
+	return a.db.SetConversationMode(id, "plan", "implementing")
 }
 
 // ---------------------------------------------------------------------------
@@ -224,8 +235,13 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 		req := providers.Request{
 			Model:    model,
 			Messages: provMsgs,
-			Tools:    a.tools.Definitions(),
+			Tools:    a.toolsForMode(conv.Mode, conv.PlanPhase),
 			Stream:   true,
+		}
+
+		// Inject system prompt for plan mode by prepending a system message
+		if conv.Mode == "plan" {
+			req.Messages = append([]providers.Message{{Role: "system", Content: planSystemPrompt}}, req.Messages...)
 		}
 
 		// 6. Streaming — corre em goroutine com contexto cancelável
@@ -351,6 +367,59 @@ func (a *App) StopStream(conversationID string) {
 // Tool Execution
 // ---------------------------------------------------------------------------
 
+// askModeTools — only read-only filesystem tools.
+var askModeTools = map[string]bool{
+	"read_file": true, "tail_file": true, "search_files": true,
+	"grep_files": true, "grep_files_lines": true, "diff_file": true,
+}
+
+// planPlanningTools — read + shell queries + write for creating the plan file + interaction.
+var planPlanningTools = map[string]bool{
+	"read_file": true, "tail_file": true, "search_files": true,
+	"grep_files": true, "grep_files_lines": true, "diff_file": true,
+	"write_file": true, "run_shell": true, "run_shell_script": true,
+	"ask_user_text": true, "ask_user_choice": true,
+}
+
+const planSystemPrompt = `Você é Orbit, operando em MODO PLAN.
+
+FASE DE PLANEJAMENTO:
+- Utilize as ferramentas de leitura e shell (somente leitura/consulta) para compreender completamente o contexto do que o usuário precisa.
+- Crie ou atualize o arquivo de plano em .orbit/plans/<nome-descritivo>.md com seções claras: Objetivo, Contexto, Tarefas, Riscos.
+- Apresente um resumo executivo (ou mais detalhes quando necessário) ao usuário.
+- Solicite que o usuário clique em "Iniciar Implementação" para confirmar o início da execução.
+- NÃO faça modificações destrutivas ou alterações de código antes da confirmação.
+
+FASE DE IMPLEMENTAÇÃO (após confirmação do usuário):
+- Siga o plano criado fielmente.
+- Use todas as ferramentas disponíveis, incluindo subagentes para delegar tarefas.
+- Atualize o arquivo de plano marcando cada etapa concluída.`
+
+func filterTools(all []providers.Tool, allowed map[string]bool) []providers.Tool {
+	out := make([]providers.Tool, 0, len(allowed))
+	for _, t := range all {
+		if allowed[t.Name] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func (a *App) toolsForMode(mode, planPhase string) []providers.Tool {
+	all := a.tools.Definitions()
+	switch mode {
+	case "ask":
+		return filterTools(all, askModeTools)
+	case "plan":
+		if planPhase == "implementing" {
+			return all
+		}
+		return filterTools(all, planPlanningTools)
+	default: // "edit"
+		return all
+	}
+}
+
 func (a *App) executeToolCall(tc providers.ToolCall) string {
 	fmt.Printf("[Orbit] Tool: '%s' | Args: %s\n", tc.Name, tc.Arguments)
 	var args map[string]any
@@ -412,12 +481,22 @@ func (a *App) Ping() string {
 // ---------------------------------------------------------------------------
 
 func toConvDTO(c db.Conversation) ConversationDTO {
+	mode := c.Mode
+	if mode == "" {
+		mode = "edit"
+	}
+	planPhase := c.PlanPhase
+	if planPhase == "" {
+		planPhase = "planning"
+	}
 	return ConversationDTO{
 		ID:        c.ID,
 		Title:     c.Title,
 		Model:     c.Model,
 		Provider:  c.Provider,
 		Pinned:    c.Pinned,
+		Mode:      mode,
+		PlanPhase: planPhase,
 		CreatedAt: c.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
 	}

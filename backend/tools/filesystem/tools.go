@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -17,6 +18,53 @@ func ReadFile(args map[string]any) string {
 		return fmt.Sprintf("Erro ao ler %s: %v", path, err)
 	}
 	return string(data)
+}
+
+// ReadFileLines lê um intervalo de linhas de um arquivo sem carregar mais contexto que o necessário.
+func ReadFileLines(args map[string]any) string {
+	path, _ := args["path"].(string)
+	startLine := intArg(args, "start_line", 0)
+	endLine := intArg(args, "end_line", 0)
+	if startLine < 1 {
+		return "start_line deve ser >= 1"
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("Erro ao ler %s: %v", path, err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	total := len(lines)
+	if startLine > total {
+		return fmt.Sprintf("start_line %d fora do intervalo (arquivo tem %d linhas)", startLine, total)
+	}
+	if endLine <= 0 || endLine > total {
+		endLine = total
+	}
+	if startLine > endLine {
+		return fmt.Sprintf("start_line %d > end_line %d", startLine, endLine)
+	}
+
+	selected := lines[startLine-1 : endLine]
+	out := make([]string, 0, len(selected))
+	for i, line := range selected {
+		out = append(out, fmt.Sprintf("%4d: %s", startLine+i, line))
+	}
+	return strings.Join(out, "\n")
+}
+
+// FileLineCount retorna o total de linhas sem devolver o conteúdo do arquivo.
+func FileLineCount(args map[string]any) string {
+	path, _ := args["path"].(string)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("Erro ao ler %s: %v", path, err)
+	}
+	if len(data) == 0 {
+		return "0"
+	}
+	return fmt.Sprintf("%d", strings.Count(string(data), "\n")+1)
 }
 
 // WriteFile cria ou sobrescreve um arquivo com conteúdo completo.
@@ -37,14 +85,20 @@ func EditFile(args map[string]any) string {
 	path, _ := args["path"].(string)
 	oldText, _ := args["old_text"].(string)
 	newText, _ := args["new_text"].(string)
+	dryRun := boolArg(args, "dry_run")
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Sprintf("Erro ao ler %s: %v", path, err)
 	}
-	if !strings.Contains(string(data), oldText) {
+	content := string(data)
+	if !strings.Contains(content, oldText) {
 		return fmt.Sprintf("Texto não encontrado em %s: %q", path, oldText)
 	}
-	result := strings.Replace(string(data), oldText, newText, 1)
+	result := strings.Replace(content, oldText, newText, 1)
+	if dryRun {
+		return result
+	}
 	if err := os.WriteFile(path, []byte(result), 0644); err != nil {
 		return fmt.Sprintf("Erro ao escrever %s: %v", path, err)
 	}
@@ -62,6 +116,54 @@ func SearchFiles(args map[string]any) string {
 		return fmt.Sprintf("Nenhum arquivo encontrado com o padrão: %s", pattern)
 	}
 	return strings.Join(files, "\n")
+}
+
+// ListDirectory lista o conteúdo direto de um diretório.
+func ListDirectory(args map[string]any) string {
+	path, _ := args["path"].(string)
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Sprintf("Erro ao listar %s: %v", path, err)
+	}
+	if len(entries) == 0 {
+		return "Diretório vazio."
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			out = append(out, fmt.Sprintf("[DIR]  %s", e.Name()))
+		} else {
+			info, _ := e.Info()
+			out = append(out, fmt.Sprintf("[FILE] %s  (%d bytes)", e.Name(), info.Size()))
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// DirectoryTree exibe a árvore recursiva de um diretório.
+func DirectoryTree(args map[string]any) string {
+	path, _ := args["path"].(string)
+	var sb strings.Builder
+	if err := walkTree(&sb, path, ""); err != nil {
+		return fmt.Sprintf("Erro ao montar árvore de %s: %v", path, err)
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// GetFileInfo retorna metadados de um arquivo ou diretório.
+func GetFileInfo(args map[string]any) string {
+	path, _ := args["path"].(string)
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Sprintf("Erro ao obter metadados de %s: %v", path, err)
+	}
+	kind := "file"
+	if info.IsDir() {
+		kind = "directory"
+	}
+	abs, _ := filepath.Abs(path)
+	return fmt.Sprintf("path:        %s\ntype:        %s\nsize:        %d bytes\npermissions: %s\nmodified:    %s",
+		abs, kind, info.Size(), info.Mode().String(), info.ModTime().Format("2006-01-02 15:04:05"))
 }
 
 // GrepFiles busca por padrão regex em arquivos correspondentes ao glob,
@@ -157,6 +259,73 @@ func GrepFilesLines(args map[string]any) string {
 	return strings.Join(results, "\n")
 }
 
+// GrepReadFile combina busca + leitura contextual em uma única chamada.
+func GrepReadFile(args map[string]any) string {
+	path, _ := args["path"].(string)
+	pattern, _ := args["pattern"].(string)
+	before := intArg(args, "lines_before", 0)
+	after := intArg(args, "lines_after", 0)
+	literal := boolArg(args, "literal")
+
+	var re *regexp.Regexp
+	var err error
+	if literal {
+		re, err = regexp.Compile(regexp.QuoteMeta(pattern))
+	} else {
+		re, err = regexp.Compile(pattern)
+	}
+	if err != nil {
+		return fmt.Sprintf("Padrão regex inválido: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("Erro ao ler %s: %v", path, err)
+	}
+	lines := strings.Split(string(data), "\n")
+	if before < 0 {
+		before = 0
+	}
+	if after < 0 {
+		after = 0
+	}
+
+	type span struct{ start, end int }
+	var spans []span
+	for i, line := range lines {
+		if re.MatchString(line) {
+			s := max(0, i-before)
+			e := min(len(lines)-1, i+after)
+			if len(spans) > 0 && s <= spans[len(spans)-1].end+1 {
+				if e > spans[len(spans)-1].end {
+					spans[len(spans)-1].end = e
+				}
+			} else {
+				spans = append(spans, span{s, e})
+			}
+		}
+	}
+
+	if len(spans) == 0 {
+		return fmt.Sprintf("Nenhuma ocorrência de '%s' em %s", pattern, path)
+	}
+
+	var out []string
+	for i, sp := range spans {
+		if i > 0 {
+			out = append(out, "--")
+		}
+		for ln := sp.start; ln <= sp.end; ln++ {
+			marker := "  "
+			if re.MatchString(lines[ln]) {
+				marker = "> "
+			}
+			out = append(out, fmt.Sprintf("%s%4d: %s", marker, ln+1, lines[ln]))
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 // DiffFile gera um diff unificado estilo git entre o arquivo atual e o novo conteúdo proposto.
 func DiffFile(args map[string]any) string {
 	path, _ := args["path"].(string)
@@ -178,6 +347,7 @@ func EditFileLines(args map[string]any) string {
 	startLine := intArg(args, "start_line", 0)
 	endLine := intArg(args, "end_line", 0)
 	newContent, _ := args["new_content"].(string)
+	dryRun := boolArg(args, "dry_run")
 
 	if startLine < 1 {
 		return "start_line deve ser >= 1"
@@ -205,8 +375,12 @@ func EditFileLines(args map[string]any) string {
 	result = append(result, lines[:startLine-1]...)
 	result = append(result, replacement...)
 	result = append(result, lines[endLine:]...)
+	joined := strings.Join(result, "\n")
+	if dryRun {
+		return joined
+	}
 
-	if err := os.WriteFile(path, []byte(strings.Join(result, "\n")), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(joined), 0644); err != nil {
 		return fmt.Sprintf("Erro ao escrever %s: %v", path, err)
 	}
 	return fmt.Sprintf("Linhas %d–%d de %s substituídas com sucesso.", startLine, endLine, path)
@@ -266,6 +440,15 @@ func MoveFile(args map[string]any) string {
 // Helpers internos
 // ---------------------------------------------------------------------------
 
+func boolArg(args map[string]any, key string) bool {
+	v, ok := args[key]
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
+}
+
 func intArg(args map[string]any, key string, def int) int {
 	v, ok := args[key]
 	if !ok {
@@ -278,6 +461,29 @@ func intArg(args map[string]any, key string, def int) int {
 		return n
 	}
 	return def
+}
+
+func walkTree(sb *strings.Builder, path, prefix string) error {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for i, e := range entries {
+		connector := "├── "
+		childPrefix := prefix + "│   "
+		if i == len(entries)-1 {
+			connector = "└── "
+			childPrefix = prefix + "    "
+		}
+		fmt.Fprintf(sb, "%s%s%s\n", prefix, connector, e.Name())
+		if e.IsDir() {
+			if err := walkTree(sb, filepath.Join(path, e.Name()), childPrefix); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // expandGlob expande padrões glob com suporte a **.
@@ -424,14 +630,12 @@ func generateUnifiedDiff(path string, oldLines, newLines []string) string {
 			continue
 		}
 
-		// Encontra o fim do hunk contíguo
 		hunkStart := i
 		hunkEnd := i
 		for hunkEnd < n && show[hunkEnd] {
 			hunkEnd++
 		}
 
-		// Calcula oldStart e newStart a partir da primeira linha do hunk
 		oldStart, newStart := 1, 1
 		for j := hunkStart; j < hunkEnd; j++ {
 			if lines[j].oldLine > 0 {

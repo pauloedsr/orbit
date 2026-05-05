@@ -2,12 +2,17 @@
 // Wails gera bindings automaticamente, mas manter tipos explícitos
 // dá autocomplete e type safety no Angular.
 
+export type ConversationMode = 'ask' | 'edit' | 'plan';
+export type PlanPhase = 'planning' | 'implementing';
+
 export interface Conversation {
   id: string;
   title: string;
   model: string;
   provider: string;
   pinned: boolean;
+  mode: ConversationMode;
+  planPhase: PlanPhase;
   createdAt: string;
   updatedAt: string;
 }

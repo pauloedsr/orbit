@@ -20,6 +20,32 @@ func Register(r *tools.Registry) {
 	}, ReadFile)
 
 	r.Register(providers.Tool{
+		Name:        "read_file_lines",
+		Description: "Lê um intervalo específico de linhas de um arquivo, evitando carregar o conteúdo completo. Útil para economizar tokens em arquivos grandes. Suporta batch via 'items'.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path":       map[string]any{"type": "string", "description": "Caminho do arquivo"},
+				"start_line": map[string]any{"type": "integer", "description": "Linha inicial (1-indexed, inclusiva)"},
+				"end_line":   map[string]any{"type": "integer", "description": "Linha final (1-indexed, inclusiva). Use 0 para ler até o fim."},
+			},
+			"required": []string{"path", "start_line"},
+		},
+	}, ReadFileLines)
+
+	r.Register(providers.Tool{
+		Name:        "file_line_count",
+		Description: "Retorna o número total de linhas de um arquivo sem devolver seu conteúdo. Útil antes de usar read_file_lines.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string", "description": "Caminho do arquivo"},
+			},
+			"required": []string{"path"},
+		},
+	}, FileLineCount)
+
+	r.Register(providers.Tool{
 		Name:        "write_file",
 		Description: "Cria ou sobrescreve um arquivo com conteúdo completo. Cria diretórios intermediários se necessário. Suporta batch via 'items'.",
 		Parameters: map[string]any{
@@ -34,13 +60,14 @@ func Register(r *tools.Registry) {
 
 	r.Register(providers.Tool{
 		Name:        "edit_file",
-		Description: "Edita um arquivo substituindo a primeira ocorrência de old_text por new_text. Suporta batch via 'items'.",
+		Description: "Edita um arquivo substituindo a primeira ocorrência de old_text por new_text. Opcionalmente pode fazer dry_run para visualizar sem gravar. Suporta batch via 'items'.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path":     map[string]any{"type": "string", "description": "Caminho do arquivo"},
-				"old_text": map[string]any{"type": "string", "description": "Texto exato a ser substituído (deve ser único no arquivo)"},
+				"old_text": map[string]any{"type": "string", "description": "Texto exato a ser substituído"},
 				"new_text": map[string]any{"type": "string", "description": "Novo texto"},
+				"dry_run":  map[string]any{"type": "boolean", "description": "Se true, mostra o resultado sem gravar"},
 			},
 			"required": []string{"path", "old_text", "new_text"},
 		},
@@ -48,7 +75,7 @@ func Register(r *tools.Registry) {
 
 	r.Register(providers.Tool{
 		Name:        "edit_file_lines",
-		Description: "Substitui um range de linhas (1-indexed) de um arquivo por novo conteúdo. Suporta batch via 'items'.",
+		Description: "Substitui um range de linhas (1-indexed) de um arquivo por novo conteúdo. Opcionalmente pode fazer dry_run para visualizar sem gravar. Suporta batch via 'items'.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -56,6 +83,7 @@ func Register(r *tools.Registry) {
 				"start_line":  map[string]any{"type": "integer", "description": "Linha inicial (1-indexed)"},
 				"end_line":    map[string]any{"type": "integer", "description": "Linha final inclusive (1-indexed); se omitido, substitui só a start_line"},
 				"new_content": map[string]any{"type": "string", "description": "Conteúdo substituto"},
+				"dry_run":     map[string]any{"type": "boolean", "description": "Se true, mostra o resultado sem gravar"},
 			},
 			"required": []string{"path", "start_line", "new_content"},
 		},
@@ -101,6 +129,42 @@ func Register(r *tools.Registry) {
 	}, MoveFile)
 
 	r.Register(providers.Tool{
+		Name:        "list_directory",
+		Description: "Lista o conteúdo direto de um diretório, indicando [FILE] e [DIR]. Mais barato que árvore recursiva para inspeção rápida. Suporta batch via 'items'.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string", "description": "Caminho do diretório"},
+			},
+			"required": []string{"path"},
+		},
+	}, ListDirectory)
+
+	r.Register(providers.Tool{
+		Name:        "directory_tree",
+		Description: "Exibe a árvore recursiva de arquivos e diretórios a partir de um caminho raiz. Suporta batch via 'items'.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string", "description": "Caminho raiz da árvore"},
+			},
+			"required": []string{"path"},
+		},
+	}, DirectoryTree)
+
+	r.Register(providers.Tool{
+		Name:        "get_file_info",
+		Description: "Retorna metadados de um arquivo ou diretório: tipo, tamanho, permissões e modificação. Suporta batch via 'items'.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string", "description": "Caminho do arquivo ou diretório"},
+			},
+			"required": []string{"path"},
+		},
+	}, GetFileInfo)
+
+	r.Register(providers.Tool{
 		Name:        "search_files",
 		Description: "Busca arquivos usando padrão Glob com suporte a ** (ex: src/**/*.go). Retorna lista de caminhos. Suporta batch via 'items'.",
 		Parameters: map[string]any{
@@ -139,6 +203,22 @@ func Register(r *tools.Registry) {
 			"required": []string{"pattern"},
 		},
 	}, GrepFilesLines)
+
+	r.Register(providers.Tool{
+		Name:        "grep_read_file",
+		Description: "Busca um padrão em um arquivo e devolve blocos numerados com contexto antes e depois de cada match, combinando grep + leitura contextual em uma chamada. Suporta batch via 'items'.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path":         map[string]any{"type": "string", "description": "Caminho do arquivo"},
+				"pattern":      map[string]any{"type": "string", "description": "Padrão regex a buscar"},
+				"lines_before": map[string]any{"type": "integer", "description": "Linhas a incluir antes de cada match (padrão: 0)"},
+				"lines_after":  map[string]any{"type": "integer", "description": "Linhas a incluir depois de cada match (padrão: 0)"},
+				"literal":      map[string]any{"type": "boolean", "description": "Se true, trata pattern como texto literal"},
+			},
+			"required": []string{"path", "pattern"},
+		},
+	}, GrepReadFile)
 
 	r.Register(providers.Tool{
 		Name:        "diff_file",

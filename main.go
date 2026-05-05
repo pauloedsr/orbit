@@ -3,12 +3,15 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/pauloedsr/orbit/backend/config"
 	"github.com/pauloedsr/orbit/backend/db"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 //go:embed all:frontend/dist
@@ -28,6 +31,8 @@ func main() {
 
 	app := NewApp(database, cfg)
 
+	userDataPath := filepath.Join(os.TempDir(), "meu-app-wails", "webview-data")
+
 	if err := wails.Run(&options.App{
 		Title:     "Orbit",
 		Width:     1280,
@@ -42,6 +47,9 @@ func main() {
 		OnShutdown:       app.shutdown,
 		Bind: []interface{}{
 			app,
+		},
+		Windows: &windows.Options{
+			WebviewUserDataPath: userDataPath,
 		},
 	}); err != nil {
 		log.Fatalf("wails: %v", err)

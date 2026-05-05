@@ -1,7 +1,7 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { WailsService } from './wails.service';
 import {
-  Conversation, Message, Settings, ToolInteraction, SubAgentSession, SubAgentIteration,
+  Conversation, ConversationMode, Message, Settings, ToolInteraction, SubAgentSession, SubAgentIteration,
   ChatThinkingPayload, ChatChunkPayload, ChatMessagePayload, ChatStoppedPayload,
 } from '../models/types';
 
@@ -34,6 +34,8 @@ export class ChatService {
     const id = this.activeConversationId();
     return this.conversations().find(c => c.id === id) ?? null;
   });
+
+  currentMode = computed(() => this.activeConversation()?.mode ?? 'edit');
 
   constructor(private wails: WailsService) {
     this.init();
@@ -246,6 +248,24 @@ export class ChatService {
       this.activeConversationId.set(null);
       this.messages.set([]);
     }
+  }
+
+  async cycleMode(convId: string) {
+    const conv = this.conversations().find(c => c.id === convId);
+    if (!conv) return;
+    const modes: ConversationMode[] = ['ask', 'edit', 'plan'];
+    const nextMode = modes[(modes.indexOf(conv.mode) + 1) % modes.length];
+    await this.wails.setConversationMode(convId, nextMode);
+    this.conversations.update(cs =>
+      cs.map(c => c.id === convId ? { ...c, mode: nextMode, planPhase: 'planning' as const } : c)
+    );
+  }
+
+  async startPlanImplementation(convId: string) {
+    await this.wails.startPlanImplementation(convId);
+    this.conversations.update(cs =>
+      cs.map(c => c.id === convId ? { ...c, planPhase: 'implementing' as const } : c)
+    );
   }
 
   private formatMessage(msg: Message): Message {

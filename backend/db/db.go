@@ -22,6 +22,8 @@ type Conversation struct {
 	Model     string
 	Provider  string
 	Pinned    bool
+	Mode      string
+	PlanPhase string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -104,6 +106,8 @@ func (d *Database) migrate() error {
 		`ALTER TABLE messages ADD COLUMN tool_calls TEXT DEFAULT ''`,
 		`ALTER TABLE messages ADD COLUMN tool_call_id TEXT DEFAULT ''`,
 		`ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'edit'`,
+		`ALTER TABLE conversations ADD COLUMN plan_phase TEXT NOT NULL DEFAULT 'planning'`,
 	}
 
 	for _, m := range migrations {
@@ -125,7 +129,7 @@ func (d *Database) CreateConversation(title, model, provider string) (Conversati
 	id := uuid.NewString()
 	now := time.Now().UTC()
 	_, err := d.conn.Exec(
-		`INSERT INTO conversations (id, title, model, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO conversations (id, title, model, provider, mode, plan_phase, created_at, updated_at) VALUES (?, ?, ?, ?, 'edit', 'planning', ?, ?)`,
 		id, title, model, provider, now, now,
 	)
 	if err != nil {
@@ -133,12 +137,13 @@ func (d *Database) CreateConversation(title, model, provider string) (Conversati
 	}
 	return Conversation{
 		ID: id, Title: title, Model: model, Provider: provider,
+		Mode: "edit", PlanPhase: "planning",
 		CreatedAt: now, UpdatedAt: now,
 	}, nil
 }
 
 func (d *Database) ListConversations() ([]Conversation, error) {
-	rows, err := d.conn.Query(`SELECT id, title, model, provider, pinned, created_at, updated_at FROM conversations ORDER BY pinned DESC, updated_at DESC`)
+	rows, err := d.conn.Query(`SELECT id, title, model, provider, pinned, mode, plan_phase, created_at, updated_at FROM conversations ORDER BY pinned DESC, updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +153,7 @@ func (d *Database) ListConversations() ([]Conversation, error) {
 	for rows.Next() {
 		var c Conversation
 		var pinnedInt int
-		if err := rows.Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &pinnedInt, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &pinnedInt, &c.Mode, &c.PlanPhase, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Pinned = pinnedInt != 0
@@ -161,8 +166,8 @@ func (d *Database) GetConversation(id string) (Conversation, error) {
 	var c Conversation
 	var pinnedInt int
 	err := d.conn.QueryRow(
-		`SELECT id, title, model, provider, pinned, created_at, updated_at FROM conversations WHERE id = ?`, id,
-	).Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &pinnedInt, &c.CreatedAt, &c.UpdatedAt)
+		`SELECT id, title, model, provider, pinned, mode, plan_phase, created_at, updated_at FROM conversations WHERE id = ?`, id,
+	).Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &pinnedInt, &c.Mode, &c.PlanPhase, &c.CreatedAt, &c.UpdatedAt)
 	c.Pinned = pinnedInt != 0
 	return c, err
 }
@@ -194,6 +199,14 @@ func (d *Database) SetConversationPinned(id string, pinned bool) error {
 
 func (d *Database) TouchConversation(id string) error {
 	_, err := d.conn.Exec(`UPDATE conversations SET updated_at = datetime('now') WHERE id = ?`, id)
+	return err
+}
+
+func (d *Database) SetConversationMode(id, mode, planPhase string) error {
+	_, err := d.conn.Exec(
+		`UPDATE conversations SET mode = ?, plan_phase = ?, updated_at = datetime('now') WHERE id = ?`,
+		mode, planPhase, id,
+	)
 	return err
 }
 

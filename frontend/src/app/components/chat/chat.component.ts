@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, AfterViewChecked, signal } from '@angular/core';
+import { Component, ElementRef, ViewChild, AfterViewChecked, signal, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MarkdownComponent } from 'ngx-markdown';
@@ -73,24 +73,42 @@ import { WailsService } from '../../services/wails.service';
       <!-- Input -->
       @if (chat.activeConversationId()) {
         <div class="input-area">
-          <textarea
-            #inputField
-            class="chat-input"
-            [(ngModel)]="inputText"
-            (keydown)="onKeydown($event)"
-            placeholder="Mensagem... (Enter para enviar, Shift+Enter para nova linha)"
-            rows="1"
-            [disabled]="chat.isStreamingFor(chat.activeConversationId()!)"
-          ></textarea>
-          @if (chat.isStreamingFor(chat.activeConversationId()!)) {
-            <button class="btn-stop" (click)="stop()" title="Parar geração">■</button>
-          } @else {
+          <div class="input-row">
+            <textarea
+              #inputField
+              class="chat-input"
+              [(ngModel)]="inputText"
+              (keydown)="onKeydown($event)"
+              placeholder="Mensagem... (Enter para enviar, Shift+Enter para nova linha)"
+              rows="1"
+              [disabled]="chat.isStreamingFor(chat.activeConversationId()!)"
+            ></textarea>
+            @if (chat.isStreamingFor(chat.activeConversationId()!)) {
+              <button class="btn-stop" (click)="stop()" title="Parar geração">■</button>
+            } @else {
+              <button
+                class="btn-send"
+                (click)="send()"
+                [disabled]="!inputText.trim()"
+              >↵</button>
+            }
+          </div>
+          <div class="input-meta">
             <button
-              class="btn-send"
-              (click)="send()"
-              [disabled]="!inputText.trim()"
-            >↵</button>
-          }
+              class="mode-badge"
+              [class]="'mode-' + chat.currentMode()"
+              (click)="cycleMode()"
+              title="Shift+Tab para alternar modo"
+            >{{ chat.currentMode().toUpperCase() }}</button>
+            @if (chat.currentMode() === 'plan' && chat.activeConversation()?.planPhase === 'planning' && chat.messages().length > 0) {
+              <button class="btn-implement" (click)="startPlanImplementation()">
+                ▶ Iniciar Implementação
+              </button>
+            }
+            @if (chat.currentMode() === 'plan' && chat.activeConversation()?.planPhase === 'implementing') {
+              <span class="plan-phase-badge">implementando</span>
+            }
+          </div>
         </div>
       }
     </div>
@@ -264,12 +282,75 @@ import { WailsService } from '../../services/wails.service';
     .input-area {
       padding: 12px 20px 16px;
       border-top: 1px solid var(--border-subtle);
-      display: flex;
-      align-items: flex-end;
-      gap: 8px;
       max-width: 840px;
       margin: 0 auto;
       width: 100%;
+    }
+
+    .input-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .input-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .mode-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      border: 1px solid currentColor;
+      cursor: pointer;
+      background: transparent;
+      transition: all var(--transition-fast);
+    }
+
+    .mode-ask {
+      color: #5b9cf6;
+      border-color: #5b9cf640;
+    }
+    .mode-ask:hover { background: #5b9cf615; }
+
+    .mode-edit {
+      color: var(--accent);
+      border-color: var(--accent-dim);
+    }
+    .mode-edit:hover { background: var(--accent-dim); opacity: 0.8; }
+
+    .mode-plan {
+      color: #a78bfa;
+      border-color: #a78bfa40;
+    }
+    .mode-plan:hover { background: #a78bfa15; }
+
+    .btn-implement {
+      font-size: 12px;
+      padding: 3px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid #a78bfa60;
+      background: transparent;
+      color: #a78bfa;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .btn-implement:hover {
+      background: #a78bfa20;
+    }
+
+    .plan-phase-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: #a78bfa;
+      opacity: 0.7;
+      letter-spacing: 0.05em;
     }
 
     .chat-input {
@@ -366,6 +447,17 @@ export class ChatComponent implements AfterViewChecked {
     this.checkConnection();
   }
 
+  @HostListener('document:keydown', ['$event'])
+  onDocumentKeydown(event: KeyboardEvent) {
+    if (event.key === 'Tab' && event.shiftKey) {
+      const convId = this.chat.activeConversationId();
+      if (convId) {
+        event.preventDefault();
+        this.chat.cycleMode(convId);
+      }
+    }
+  }
+
   ngAfterViewChecked() {
     if (this.shouldScroll) {
       this.scrollToBottom();
@@ -394,6 +486,19 @@ export class ChatComponent implements AfterViewChecked {
     this.shouldScroll = true;
 
     setTimeout(() => this.inputField?.nativeElement?.focus(), 50);
+  }
+
+  cycleMode() {
+    const convId = this.chat.activeConversationId();
+    if (convId) this.chat.cycleMode(convId);
+  }
+
+  async startPlanImplementation() {
+    const convId = this.chat.activeConversationId();
+    if (!convId) return;
+    await this.chat.startPlanImplementation(convId);
+    // Trigger the AI with a plan implementation start message
+    await this.chat.sendMessage('Iniciando implementação conforme o plano.');
   }
 
   stop() {
