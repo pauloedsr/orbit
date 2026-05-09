@@ -14,8 +14,10 @@ import { ChatService } from './services/chat.service';
   imports: [SidebarComponent, ChatComponent, SettingsComponent, ToolInteractionComponent, DeleteConfirmationDialogComponent, RenameConversationDialogComponent, SubAgentPanelComponent],
   template: `
     <div class="app-shell">
-      <app-sidebar />
       <app-chat style="flex: 1; min-width: 0;" />
+      @if (chat.sidebarVisible()) {
+        <app-sidebar />
+      }
       @if (chat.subAgentPanelState() !== 'hidden') {
         <app-subagent-panel />
       }

@@ -162,6 +162,15 @@ func formatOutput(shell, command, stdout, stderr string, exitCode int) string {
 	return sb.String()
 }
 
+// ScriptPreview returns the first 3 lines of a script for display purposes.
+func ScriptPreview(script string) string {
+	lines := strings.SplitN(strings.TrimSpace(script), "\n", 4)
+	if len(lines) > 3 {
+		lines = append(lines[:3], "...")
+	}
+	return strings.Join(lines, "\n")
+}
+
 func strArg(args map[string]any, key string) string {
 	v, _ := args[key].(string)
 	return v

@@ -9,18 +9,13 @@ import {
 export class ChatService {
   conversations = signal<Conversation[]>([]);
   activeConversationId = signal<string | null>(null);
-  messages = signal<Message[]>([]);
+  openTabs = signal<string[]>([]);
+  messagesByConv = signal<Map<string, Message[]>>(new Map());
+  tabLocked = signal<Map<string, boolean>>(new Map());
+  sidebarVisible = signal<boolean>(true);
   isLoading = signal(false);
   private _streamingStates = signal<Map<string, { content: string }>>(new Map());
   showSettings = signal(false);
-
-  isStreamingFor(id: string): boolean {
-    return this._streamingStates().has(id);
-  }
-
-  streamingContentFor(id: string): string {
-    return this._streamingStates().get(id)?.content ?? '';
-  }
   error = signal<string | null>(null);
   settings = signal<Settings>({ defaultModel: '', defaultProvider: '', theme: 'dark', llmEndpoint: '', llmApiKey: '', llmModel: '' });
   pendingInteraction = signal<ToolInteraction | null>(null);
@@ -30,6 +25,11 @@ export class ChatService {
   subAgentPanelState = signal<'hidden' | 'visible' | 'fading'>('hidden');
   private subAgentFadeTimer: ReturnType<typeof setTimeout> | null = null;
 
+  messages = computed<Message[]>(() => {
+    const id = this.activeConversationId();
+    return id ? (this.messagesByConv().get(id) ?? []) : [];
+  });
+
   activeConversation = computed(() => {
     const id = this.activeConversationId();
     return this.conversations().find(c => c.id === id) ?? null;
@@ -37,8 +37,34 @@ export class ChatService {
 
   currentMode = computed(() => this.activeConversation()?.mode ?? 'edit');
 
+  isStreamingFor(id: string): boolean {
+    return this._streamingStates().has(id);
+  }
+
+  streamingContentFor(id: string): string {
+    return this._streamingStates().get(id)?.content ?? '';
+  }
+
   constructor(private wails: WailsService) {
     this.init();
+  }
+
+  private pushToConv(convId: string, msg: Message) {
+    this.messagesByConv.update(m => {
+      const existing = m.get(convId) ?? [];
+      return new Map(m).set(convId, [...existing, msg]);
+    });
+  }
+
+  private async loadMessages(id: string) {
+    const isActive = this.activeConversationId() === id;
+    if (isActive) this.isLoading.set(true);
+    try {
+      const msgs = await this.wails.getMessages(id);
+      this.messagesByConv.update(m => new Map(m).set(id, msgs.map(msg => this.formatMessage(msg))));
+    } finally {
+      if (this.activeConversationId() === id) this.isLoading.set(false);
+    }
   }
 
   private async init() {
@@ -55,18 +81,14 @@ export class ChatService {
 
     this.wails.onEvent('chat:message', (data: ChatMessagePayload) => {
       const msg = this.formatMessage(data.message);
-      if (msg.conversationId === this.activeConversationId()) {
-        this.messages.update(msgs => [...msgs, msg]);
-      }
+      this.pushToConv(msg.conversationId, msg);
       this._streamingStates.update(m => { const n = new Map(m); n.delete(data.conversationId); return n; });
     });
 
     this.wails.onEvent('chat:stopped', (data: ChatStoppedPayload) => {
       if (data.message) {
         const msg = this.formatMessage(data.message);
-        if (msg.conversationId === this.activeConversationId()) {
-          this.messages.update(msgs => [...msgs, msg]);
-        }
+        this.pushToConv(msg.conversationId, msg);
       }
       this._streamingStates.update(m => { const n = new Map(m); n.delete(data.conversationId); return n; });
     });
@@ -154,15 +176,50 @@ export class ChatService {
     this.conversations.set(convs);
   }
 
-  async selectConversation(id: string) {
-    this.activeConversationId.set(id);
-    this.isLoading.set(true);
-    try {
-      const msgs = await this.wails.getMessages(id);
-      this.messages.set(msgs.map(m => this.formatMessage(m)));
-    } finally {
-      this.isLoading.set(false);
+  async openTab(id: string) {
+    if (!this.openTabs().includes(id)) {
+      this.openTabs.update(tabs => [...tabs, id]);
     }
+    this.activeConversationId.set(id);
+    if (!this.messagesByConv().has(id)) {
+      await this.loadMessages(id);
+    }
+  }
+
+  async closeTab(id: string) {
+    if (this.tabLocked().get(id)) return;
+    const tabs = this.openTabs();
+    const idx = tabs.indexOf(id);
+    if (idx === -1) return;
+
+    const newTabs = tabs.filter(t => t !== id);
+    this.openTabs.set(newTabs);
+    this.messagesByConv.update(m => { const n = new Map(m); n.delete(id); return n; });
+    this.tabLocked.update(m => { const n = new Map(m); n.delete(id); return n; });
+
+    if (this.activeConversationId() === id) {
+      const nextId = newTabs[idx] ?? newTabs[idx - 1] ?? null;
+      this.activeConversationId.set(nextId);
+      if (nextId && !this.messagesByConv().has(nextId)) {
+        await this.loadMessages(nextId);
+      }
+    }
+  }
+
+  setActiveTab(id: string) {
+    this.activeConversationId.set(id);
+  }
+
+  toggleTabLock(id: string) {
+    this.tabLocked.update(m => {
+      const n = new Map(m);
+      n.set(id, !n.get(id));
+      return n;
+    });
+  }
+
+  async selectConversation(id: string) {
+    await this.openTab(id);
   }
 
   async createConversation(title?: string) {
@@ -173,7 +230,7 @@ export class ChatService {
       'openai-compat'
     );
     this.conversations.update(c => [conv, ...c]);
-    await this.selectConversation(conv.id);
+    await this.openTab(conv.id);
     return conv;
   }
 
@@ -181,7 +238,6 @@ export class ChatService {
     const convId = this.activeConversationId();
     if (!convId || !content.trim()) return;
 
-    // Adiciona mensagem do user na UI imediatamente (optimistic)
     const userMsg: Message = {
       id: crypto.randomUUID(),
       conversationId: convId,
@@ -190,7 +246,7 @@ export class ChatService {
       model: '',
       createdAt: new Date().toISOString(),
     };
-    this.messages.update(msgs => [...msgs, userMsg]);
+    this.pushToConv(convId, userMsg);
 
     this.error.set(null);
     try {
@@ -244,9 +300,25 @@ export class ChatService {
   async deleteConversation(id: string) {
     await this.wails.deleteConversation(id);
     this.conversations.update(c => c.filter(x => x.id !== id));
-    if (this.activeConversationId() === id) {
+
+    // Force-close tab even if locked
+    const tabs = this.openTabs();
+    const idx = tabs.indexOf(id);
+    if (idx !== -1) {
+      const newTabs = tabs.filter(t => t !== id);
+      this.openTabs.set(newTabs);
+      this.messagesByConv.update(m => { const n = new Map(m); n.delete(id); return n; });
+      this.tabLocked.update(m => { const n = new Map(m); n.delete(id); return n; });
+
+      if (this.activeConversationId() === id) {
+        const nextId = newTabs[idx] ?? newTabs[idx - 1] ?? null;
+        this.activeConversationId.set(nextId);
+        if (nextId && !this.messagesByConv().has(nextId)) {
+          await this.loadMessages(nextId);
+        }
+      }
+    } else if (this.activeConversationId() === id) {
       this.activeConversationId.set(null);
-      this.messages.set([]);
     }
   }
 

@@ -4,11 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { MarkdownComponent } from 'ngx-markdown';
 import { ChatService } from '../../services/chat.service';
 import { WailsService } from '../../services/wails.service';
+import { TabBarComponent } from '../tab-bar/tab-bar.component';
 
 @Component({
   selector: 'app-chat',
   standalone: true,
-  imports: [CommonModule, FormsModule, MarkdownComponent],
+  imports: [CommonModule, FormsModule, MarkdownComponent, TabBarComponent],
   template: `
     <div class="chat-container">
       <!-- Header -->
@@ -23,11 +24,28 @@ import { WailsService } from '../../services/wails.service';
             <span class="header-title" style="color: var(--text-tertiary)">Orbit</span>
           </div>
         }
-        <div class="header-status wails-no-drag">
-          <span class="status-dot" [class.connected]="isConnected()"></span>
-          <span class="status-text mono">{{ isConnected() ? 'IPC OK' : 'mock' }}</span>
+        <div class="header-actions wails-no-drag">
+          <div class="header-status">
+            <span class="status-dot" [class.connected]="isConnected()"></span>
+            <span class="status-text mono">{{ isConnected() ? 'IPC OK' : 'mock' }}</span>
+          </div>
+          <button
+            class="btn-toggle-sidebar"
+            (click)="toggleSidebar()"
+            [title]="chat.sidebarVisible() ? 'Ocultar painel' : 'Mostrar painel'"
+          >
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="1.5" y="1.5" width="12" height="12" rx="2"/>
+              <line x1="9.5" y1="1.5" x2="9.5" y2="13.5"/>
+            </svg>
+          </button>
         </div>
       </div>
+
+      <!-- Tab bar -->
+      @if (chat.openTabs().length > 0) {
+        <app-tab-bar />
+      }
 
       <!-- Messages -->
       <div class="messages-area" #messagesArea>
@@ -124,23 +142,28 @@ import { WailsService } from '../../services/wails.service';
     }
 
     .chat-header {
-      padding: 12px 20px;
+      padding: 0 16px;
       border-bottom: 1px solid var(--border-subtle);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      min-height: 48px;
+      min-height: 44px;
+      flex-shrink: 0;
     }
 
     .header-info {
       display: flex;
       align-items: baseline;
       gap: 10px;
+      overflow: hidden;
     }
 
     .header-title {
       font-weight: 600;
-      font-size: 14px;
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .header-model {
@@ -149,12 +172,20 @@ import { WailsService } from '../../services/wails.service';
       padding: 2px 6px;
       background: var(--bg-tertiary);
       border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
     }
 
     .header-status {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       font-size: 11px;
       color: var(--text-tertiary);
     }
@@ -172,6 +203,25 @@ import { WailsService } from '../../services/wails.service';
 
     .status-text {
       font-size: 10px;
+    }
+
+    .btn-toggle-sidebar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      transition: background var(--transition-fast), color var(--transition-fast);
+    }
+
+    .btn-toggle-sidebar:hover {
+      background: var(--bg-hover);
+      color: var(--text-secondary);
     }
 
     /* Messages */
@@ -497,8 +547,11 @@ export class ChatComponent implements AfterViewChecked {
     const convId = this.chat.activeConversationId();
     if (!convId) return;
     await this.chat.startPlanImplementation(convId);
-    // Trigger the AI with a plan implementation start message
     await this.chat.sendMessage('Iniciando implementação conforme o plano.');
+  }
+
+  toggleSidebar() {
+    this.chat.sidebarVisible.set(!this.chat.sidebarVisible());
   }
 
   stop() {

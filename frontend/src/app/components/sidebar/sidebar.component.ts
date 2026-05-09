@@ -14,7 +14,10 @@ import { ChatService } from '../../services/chat.service';
           <span class="logo-text">Orbit</span>
         </div>
         <button class="btn-new wails-no-drag" (click)="newChat()" title="Nova conversa (Ctrl+N)">
-          +
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9.5 1.5L12.5 4.5L5.5 11.5H2.5V8.5L9.5 1.5Z"/>
+            <line x1="1" y1="13" x2="13" y2="13"/>
+          </svg>
         </button>
       </div>
 
@@ -37,7 +40,7 @@ import { ChatService } from '../../services/chat.service';
               <span class="conv-model mono">{{ shortModel(conv.model) }}</span>
             </button>
             <div class="conv-menu-container">
-              <button 
+              <button
                 class="btn-menu"
                 (click)="toggleMenu(conv.id)"
                 title="Opções"
@@ -76,16 +79,18 @@ import { ChatService } from '../../services/chat.service';
   `,
   styles: [`
     .sidebar {
-      width: 260px;
+      width: 240px;
       height: 100%;
       background: var(--bg-secondary);
-      border-right: 1px solid var(--border-subtle);
+      border-left: 1px solid var(--border-subtle);
       display: flex;
       flex-direction: column;
+      flex-shrink: 0;
     }
 
     .sidebar-header {
-      padding: 14px 16px;
+      padding: 0 12px;
+      height: 44px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -95,20 +100,19 @@ import { ChatService } from '../../services/chat.service';
     .logo {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
       font-weight: 700;
-      font-size: 15px;
+      font-size: 14px;
       letter-spacing: -0.02em;
     }
 
     .logo-icon {
       display: flex;
       align-items: center;
-      justify-content: center
-      color: var(--accent);
+      justify-content: center;
       img {
-        width: 16px;
-        height: 16px;
+        width: 15px;
+        height: 15px;
       }
     }
 
@@ -117,43 +121,42 @@ import { ChatService } from '../../services/chat.service';
     }
 
     .btn-new {
-      width: 28px;
-      height: 28px;
-      border: 1px solid var(--border-default);
+      width: 24px;
+      height: 24px;
+      border: none;
       border-radius: var(--radius-sm);
       background: transparent;
-      color: var(--text-secondary);
-      font-size: 16px;
+      color: var(--text-tertiary);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       transition: all var(--transition-fast);
+      padding: 0;
     }
 
     .btn-new:hover {
       background: var(--bg-hover);
       color: var(--text-primary);
-      border-color: var(--border-strong);
     }
 
     .conversation-list {
       flex: 1;
       overflow-y: auto;
-      padding: 8px;
+      padding: 6px;
     }
 
     .conv-item-wrapper {
       display: flex;
       align-items: center;
-      gap: 4px;
-      margin-bottom: 2px;
+      gap: 2px;
+      margin-bottom: 1px;
       position: relative;
     }
 
     .conv-item {
       flex: 1;
-      padding: 10px 12px;
+      padding: 8px 10px;
       border: none;
       border-radius: var(--radius-sm);
       background: transparent;
@@ -165,7 +168,8 @@ import { ChatService } from '../../services/chat.service';
       gap: 2px;
       transition: all var(--transition-fast);
       font-family: var(--font-sans);
-      font-size: 13px;
+      font-size: 12px;
+      min-width: 0;
     }
 
     .conv-item:hover {
@@ -181,7 +185,7 @@ import { ChatService } from '../../services/chat.service';
     .conv-title-row {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       overflow: hidden;
     }
 
@@ -189,17 +193,18 @@ import { ChatService } from '../../services/chat.service';
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      flex: 1;
     }
 
     .conv-model {
-      font-size: 11px;
+      font-size: 10px;
       color: var(--text-tertiary);
     }
 
     .pin-icon {
-      font-size: 12px;
+      font-size: 11px;
       flex-shrink: 0;
-      opacity: 0.8;
+      opacity: 0.7;
     }
 
     @keyframes pulse {
@@ -208,8 +213,8 @@ import { ChatService } from '../../services/chat.service';
     }
 
     .streaming-dot {
-      width: 7px;
-      height: 7px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       background: var(--accent);
       flex-shrink: 0;
@@ -218,27 +223,34 @@ import { ChatService } from '../../services/chat.service';
 
     .conv-menu-container {
       position: relative;
+      flex-shrink: 0;
     }
 
     .btn-menu {
-      width: 28px;
-      height: 28px;
+      width: 24px;
+      height: 24px;
       padding: 0;
       border: none;
       border-radius: var(--radius-sm);
       background: transparent;
       color: var(--text-tertiary);
-      font-size: 16px;
+      font-size: 14px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       transition: all var(--transition-fast);
+      opacity: 0;
+    }
+
+    .conv-item-wrapper:hover .btn-menu {
+      opacity: 1;
     }
 
     .btn-menu:hover {
       background: var(--bg-hover);
       color: var(--text-secondary);
+      opacity: 1;
     }
 
     .dropdown-menu {
@@ -249,22 +261,24 @@ import { ChatService } from '../../services/chat.service';
       background: var(--bg-secondary);
       border: 1px solid var(--border-default);
       border-radius: var(--radius-sm);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
       min-width: 150px;
       z-index: 100;
+      padding: 4px;
     }
 
     .dropdown-item {
       width: 100%;
-      padding: 10px 12px;
+      padding: 7px 10px;
       border: none;
       background: transparent;
       color: var(--text-secondary);
       font-family: var(--font-sans);
-      font-size: 13px;
+      font-size: 12px;
       text-align: left;
       cursor: pointer;
       transition: all var(--transition-fast);
+      border-radius: 4px;
     }
 
     .dropdown-item:hover {
@@ -273,48 +287,38 @@ import { ChatService } from '../../services/chat.service';
     }
 
     .dropdown-item.danger:hover {
-      background: rgba(239, 68, 68, 0.15);
+      background: rgba(239, 68, 68, 0.12);
       color: var(--error);
     }
 
-    .dropdown-item:first-child {
-      border-top-left-radius: var(--radius-sm);
-      border-top-right-radius: var(--radius-sm);
-    }
-
-    .dropdown-item:last-child {
-      border-bottom-left-radius: var(--radius-sm);
-      border-bottom-right-radius: var(--radius-sm);
-    }
-
     .empty-state {
-      padding: 24px 16px;
+      padding: 24px 12px;
       text-align: center;
       color: var(--text-tertiary);
-      font-size: 13px;
+      font-size: 12px;
     }
 
     .hint {
       margin-top: 4px;
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: 10px;
       color: var(--text-tertiary);
     }
 
     .sidebar-footer {
-      padding: 12px 16px;
+      padding: 10px 12px;
       border-top: 1px solid var(--border-subtle);
     }
 
     .btn-settings {
       width: 100%;
-      padding: 8px 12px;
+      padding: 7px 10px;
       border: none;
       border-radius: var(--radius-sm);
       background: transparent;
       color: var(--text-tertiary);
       font-family: var(--font-sans);
-      font-size: 12px;
+      font-size: 11px;
       cursor: pointer;
       text-align: left;
       transition: all var(--transition-fast);
@@ -336,11 +340,7 @@ export class SidebarComponent {
   }
 
   toggleMenu(convId: string) {
-    if (this.openMenuId() === convId) {
-      this.openMenuId.set(null);
-    } else {
-      this.openMenuId.set(convId);
-    }
+    this.openMenuId.set(this.openMenuId() === convId ? null : convId);
   }
 
   confirmDelete(convId: string, title: string) {
@@ -358,7 +358,6 @@ export class SidebarComponent {
       await this.chat.toggleConversationPinned(convId);
     } catch (err) {
       console.error('Erro ao fixar/desafixar conversa:', err);
-      alert('Erro ao fixar/desafixar a conversa');
     }
     this.openMenuId.set(null);
   }
@@ -368,12 +367,10 @@ export class SidebarComponent {
       await this.chat.deleteConversation(convId);
     } catch (err) {
       console.error('Erro ao excluir conversa:', err);
-      alert('Erro ao excluir a conversa');
     }
   }
 
   shortModel(model: string): string {
-    // claude-sonnet-4-20250514 → sonnet-4
     const match = model.match(/claude-(\w+-\d)/);
     return match ? match[1] : model.split('/').pop() || model;
   }
