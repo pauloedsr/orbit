@@ -20,6 +20,17 @@ type OpenAIProvider struct {
 	client  *http.Client
 }
 
+func init() {
+	RegisterFallback(Factory{
+		Name:        "openai-compat",
+		Description: "OpenAI-compatible API (OpenAI, Ollama, LM Studio, LiteLLM, LocalAI, ...)",
+		Detect:      MatchAlways(),
+		Build: func(cfg Config) Provider {
+			return NewOpenAIProvider("openai-compat", cfg.Endpoint, cfg.APIKey)
+		},
+	})
+}
+
 func NewOpenAIProvider(name, baseURL, apiKey string) *OpenAIProvider {
 	return &OpenAIProvider{
 		name:    name,
@@ -31,8 +42,8 @@ func NewOpenAIProvider(name, baseURL, apiKey string) *OpenAIProvider {
 	}
 }
 
-func (p *OpenAIProvider) Name() string        { return p.name }
-func (p *OpenAIProvider) SupportsTools() bool { return true }
+func (p *OpenAIProvider) Name() string              { return p.name }
+func (p *OpenAIProvider) Capabilities() []Capability { return []Capability{CapTools} }
 
 type oaiTool struct {
 	Type     string      `json:"type"`
@@ -42,7 +53,7 @@ type oaiTool struct {
 type oaiFunction struct {
 	Name        string      `json:"name,omitempty"`
 	Description string      `json:"description,omitempty"`
-	Parameters  interface{} `json:"parameters,omitempty"`
+	Parameters  any `json:"parameters,omitempty"`
 }
 
 type oaiToolCall struct {
@@ -65,10 +76,13 @@ type oaiMessage struct {
 }
 
 type oaiRequest struct {
-	Model    string       `json:"model"`
-	Messages []oaiMessage `json:"messages"`
-	Tools    []oaiTool    `json:"tools,omitempty"`
-	Stream   bool         `json:"stream"`
+	Model       string       `json:"model"`
+	Messages    []oaiMessage `json:"messages"`
+	Tools       []oaiTool    `json:"tools,omitempty"`
+	Stream      bool         `json:"stream"`
+	Temperature float64      `json:"temperature,omitempty"`
+	TopP        float64      `json:"top_p,omitempty"`
+	MaxTokens   int          `json:"max_tokens,omitempty"`
 }
 
 type oaiChunk struct {
@@ -130,10 +144,13 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 	}
 
 	body, err := json.Marshal(oaiRequest{
-		Model:    req.Model,
-		Messages: msgs,
-		Tools:    oaiTools,
-		Stream:   true,
+		Model:       req.Model,
+		Messages:    msgs,
+		Tools:       oaiTools,
+		Stream:      true,
+		Temperature: req.Temperature,
+		TopP:        req.TopP,
+		MaxTokens:   req.MaxTokens,
 	})
 	if err != nil {
 		out <- Event{Type: EventError, Error: err}

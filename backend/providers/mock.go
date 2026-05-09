@@ -15,9 +15,8 @@ func NewMockProvider() *MockProvider {
 	return &MockProvider{}
 }
 
-func (m *MockProvider) Name() string { return "mock" }
-
-func (m *MockProvider) SupportsTools() bool { return false }
+func (m *MockProvider) Name() string               { return "mock" }
+func (m *MockProvider) Capabilities() []Capability { return nil }
 
 func (m *MockProvider) Stream(ctx context.Context, req Request, out chan<- Event) error {
 	defer close(out)

@@ -17,7 +17,31 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
         @if (chat.activeConversation(); as conv) {
           <div class="header-info wails-no-drag">
             <span class="header-title">{{ conv.title }}</span>
-            <span class="header-model mono">{{ conv.model }}</span>
+            <div class="model-selector" (click)="toggleModelPicker($event)">
+              <span class="header-model mono">{{ chat.friendlyModelName(conv.model) }}</span>
+              <svg class="chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <polyline points="2,3.5 5,6.5 8,3.5"/>
+              </svg>
+              @if (showModelPicker()) {
+                <div class="model-picker" (click)="$event.stopPropagation()">
+                  @if (chat.models().length === 0) {
+                    <div class="model-empty">Nenhum modelo cadastrado.<br>Adicione em Settings → Modelos.</div>
+                  }
+                  @for (m of chat.models(); track m.id) {
+                    <button
+                      class="model-option"
+                      [class.selected]="m.id === conv.model"
+                      (click)="selectModel(conv.id, m.id)"
+                    >
+                      <span class="model-opt-name">{{ m.friendlyName }}</span>
+                      @if (m.contextWindow) {
+                        <span class="model-opt-ctx mono">{{ m.contextWindow }}k</span>
+                      }
+                    </button>
+                  }
+                </div>
+              }
+            </div>
           </div>
         } @else {
           <div class="header-info wails-no-drag">
@@ -149,13 +173,17 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
       justify-content: space-between;
       min-height: 44px;
       flex-shrink: 0;
+      overflow: visible;
+      position: relative;
+      z-index: 10;
     }
 
     .header-info {
       display: flex;
-      align-items: baseline;
+      align-items: center;
       gap: 10px;
-      overflow: hidden;
+      min-width: 0;
+      /* sem overflow:hidden aqui — o dropdown do model picker precisa escapar */
     }
 
     .header-title {
@@ -164,14 +192,92 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      max-width: 220px;
+    }
+
+    .model-selector {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      cursor: pointer;
+      padding: 2px 5px;
+      border-radius: 4px;
+      transition: background var(--transition-fast);
+      flex-shrink: 0;
+    }
+
+    .model-selector:hover {
+      background: var(--bg-hover);
     }
 
     .header-model {
       font-size: 11px;
       color: var(--text-tertiary);
-      padding: 2px 6px;
-      background: var(--bg-tertiary);
+    }
+
+    .chevron {
+      color: var(--text-tertiary);
+      opacity: 0.6;
+    }
+
+    .model-picker {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      min-width: 200px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+      z-index: 200;
+      padding: 4px;
+    }
+
+    .model-empty {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--text-tertiary);
+      line-height: 1.5;
+    }
+
+    .model-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 7px 10px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
       border-radius: 4px;
+      gap: 8px;
+      transition: background var(--transition-fast), color var(--transition-fast);
+    }
+
+    .model-option:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .model-option.selected {
+      color: var(--accent);
+    }
+
+    .model-opt-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .model-opt-ctx {
+      font-size: 10px;
+      color: var(--text-tertiary);
       flex-shrink: 0;
     }
 
@@ -487,6 +593,7 @@ export class ChatComponent implements AfterViewChecked {
 
   inputText = '';
   isConnected = signal(false);
+  showModelPicker = signal(false);
 
   private shouldScroll = false;
 
@@ -552,6 +659,21 @@ export class ChatComponent implements AfterViewChecked {
 
   toggleSidebar() {
     this.chat.sidebarVisible.set(!this.chat.sidebarVisible());
+  }
+
+  toggleModelPicker(event: MouseEvent) {
+    event.stopPropagation();
+    this.showModelPicker.set(!this.showModelPicker());
+  }
+
+  async selectModel(convId: string, modelId: string) {
+    this.showModelPicker.set(false);
+    await this.chat.setConversationModel(convId, modelId);
+  }
+
+  @HostListener('document:click')
+  onDocumentClick() {
+    this.showModelPicker.set(false);
   }
 
   stop() {

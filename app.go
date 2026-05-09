@@ -154,7 +154,7 @@ func (a *App) GetMessages(conversationID string) ([]MessageDTO, error) {
 }
 
 func (a *App) AddMessage(conversationID, role, content, model string) (MessageDTO, error) {
-	msg, err := a.db.AddMessage(conversationID, role, content, model, "", "")
+	msg, err := a.db.AddMessage(conversationID, role, content, model, "", "", "")
 	if err != nil {
 		return MessageDTO{}, err
 	}
@@ -174,7 +174,7 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 	apiKey, _ := a.db.GetSetting("llm_api_key")
 
 	// 2. Persiste mensagem do usuário
-	_, err := a.db.AddMessage(conversationID, "user", content, "", "", "")
+	_, err := a.db.AddMessage(conversationID, "user", content, "", "", "", "")
 	if err != nil {
 		return MessageDTO{}, fmt.Errorf("save user msg: %w", err)
 	}
@@ -185,9 +185,10 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 		return MessageDTO{}, fmt.Errorf("get conversation: %w", err)
 	}
 
+	// Conversa tem prioridade; settings serve como fallback para conversas antigas sem modelo
 	model := conv.Model
-	if m, _ := a.db.GetSetting("llm_model"); m != "" {
-		model = m
+	if model == "" {
+		model, _ = a.db.GetSetting("llm_model")
 	}
 
 	// Contexto cancelável por conversa — permite botão Stop sem afetar outras conversas
@@ -202,7 +203,7 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 		a.streamCancelsMu.Unlock()
 	}()
 
-	p := providers.NewOpenAIProvider("openai-compat", endpoint, apiKey)
+	p := providers.Resolve(providers.Config{Endpoint: endpoint, APIKey: apiKey, Model: model})
 	var finalMsg db.Message
 
 	// Loop principal de Tool Calling
@@ -217,18 +218,23 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			"conversationId": conversationID,
 		})
 
-		// 5. Monta payload mapeando tool_calls armazenados em JSON
+		// 5. Monta payload mapeando tool_calls e metadata armazenados em JSON
 		provMsgs := make([]providers.Message, 0, len(dbMsgs))
 		for _, m := range dbMsgs {
 			var tcs []providers.ToolCall
 			if m.ToolCalls != "" {
-				json.Unmarshal([]byte(m.ToolCalls), &tcs)
+				json.Unmarshal([]byte(m.ToolCalls), &tcs) //nolint:errcheck
+			}
+			var meta map[string]any
+			if m.Metadata != "" {
+				json.Unmarshal([]byte(m.Metadata), &meta) //nolint:errcheck
 			}
 			provMsgs = append(provMsgs, providers.Message{
 				Role:       m.Role,
 				Content:    m.Content,
 				ToolCalls:  tcs,
 				ToolCallID: m.ToolCallID,
+				Metadata:   meta,
 			})
 		}
 
@@ -237,6 +243,17 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			Messages: provMsgs,
 			Tools:    a.toolsForMode(conv.Mode, conv.PlanPhase),
 			Stream:   true,
+		}
+		if modelDef, err := a.db.GetModel(model); err == nil {
+			if modelDef.Temperature != nil {
+				req.Temperature = *modelDef.Temperature
+			}
+			if modelDef.TopP != nil {
+				req.TopP = *modelDef.TopP
+			}
+			if modelDef.MaxTokens != nil {
+				req.MaxTokens = *modelDef.MaxTokens
+			}
 		}
 
 		// Inject system prompt for plan mode by prepending a system message
@@ -251,6 +268,7 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 
 		var buf strings.Builder
 		activeToolCalls := make(map[int]*providers.ToolCall)
+		var pendingMetadata map[string]any
 
 		for evt := range eventCh {
 			switch evt.Type {
@@ -281,6 +299,8 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 					"conversationId": conversationID,
 					"text":           evt.ToolCall.ArgDelta,
 				})
+			case providers.EventDone:
+				pendingMetadata = evt.Metadata
 			case providers.EventError:
 			}
 		}
@@ -288,7 +308,7 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			if errors.Is(err, context.Canceled) {
 				// Salva conteúdo parcial acumulado antes do stop
 				if buf.Len() > 0 {
-					partialMsg, _ := a.db.AddMessage(conversationID, "assistant", buf.String(), model, "", "")
+					partialMsg, _ := a.db.AddMessage(conversationID, "assistant", buf.String(), model, "", "", "")
 					runtime.EventsEmit(a.ctx, "chat:stopped", map[string]any{
 						"conversationId": conversationID,
 						"message":        toMsgDTO(partialMsg),
@@ -314,7 +334,16 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			}
 			tcsJSON, _ := json.Marshal(tcs)
 
-			msg, err := a.db.AddMessage(conversationID, "assistant", buf.String(), model, string(tcsJSON), "")
+			// Serializa metadata do provider (ex: thought signatures do Gemini) para persistir
+			metaJSON := ""
+			if len(pendingMetadata) > 0 {
+				if b, err := json.Marshal(pendingMetadata); err == nil {
+					metaJSON = string(b)
+				}
+			}
+			fmt.Printf("[Orbit] salvando assistant msg com toolCalls, metadata=%s\n", metaJSON)
+
+			msg, err := a.db.AddMessage(conversationID, "assistant", buf.String(), model, string(tcsJSON), "", metaJSON)
 			if err != nil {
 				return MessageDTO{}, fmt.Errorf("save assistant tool msg: %w", err)
 			}
@@ -326,7 +355,7 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			// Executa ferramentas e injeta as respostas na conversa
 			for _, tc := range tcs {
 				result := a.executeToolCall(tc)
-				toolMsg, err := a.db.AddMessage(conversationID, "tool", result, model, "", tc.ID)
+				toolMsg, err := a.db.AddMessage(conversationID, "tool", result, model, "", tc.ID, "")
 				if err != nil {
 					return MessageDTO{}, fmt.Errorf("save tool result msg: %w", err)
 				}
@@ -340,7 +369,7 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 		}
 
 		// Sem tool calls, o LLM finalizou a resposta
-		msg, err := a.db.AddMessage(conversationID, "assistant", buf.String(), model, "", "")
+		msg, err := a.db.AddMessage(conversationID, "assistant", buf.String(), model, "", "", "")
 		if err != nil {
 			return MessageDTO{}, fmt.Errorf("save assistant msg: %w", err)
 		}
@@ -466,6 +495,34 @@ func (a *App) GetSettings() (SettingsDTO, error) {
 
 func (a *App) UpdateSetting(key, value string) error {
 	return a.db.SetSetting(key, value)
+}
+
+// ---------------------------------------------------------------------------
+// Models registry
+// ---------------------------------------------------------------------------
+
+func (a *App) ListModels() ([]db.Model, error) {
+	return a.db.ListModels()
+}
+
+func (a *App) CreateModel(m db.Model) (db.Model, error) {
+	return a.db.CreateModel(m)
+}
+
+func (a *App) UpdateModel(m db.Model) error {
+	return a.db.UpdateModel(m)
+}
+
+func (a *App) DeleteModel(id string) error {
+	return a.db.DeleteModel(id)
+}
+
+func (a *App) SetConversationModel(convID, modelID string) error {
+	provider := "openai-compat"
+	if strings.HasPrefix(modelID, "claude-") {
+		provider = "anthropic"
+	}
+	return a.db.SetConversationModel(convID, modelID, provider)
 }
 
 // ---------------------------------------------------------------------------

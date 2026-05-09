@@ -1,5 +1,5 @@
 import { Injectable, NgZone } from '@angular/core';
-import { Conversation, ConversationMode, Message, Settings } from '../models/types';
+import { Conversation, ConversationMode, Message, ModelDef, Settings } from '../models/types';
 
 /**
  * WailsService encapsula todas as chamadas ao backend Go.
@@ -45,7 +45,8 @@ export class WailsService {
 
   async listConversations(): Promise<Conversation[]> {
     if (!this.go) return [];
-    return this.go.ListConversations() ?? [];
+    const result = await this.go.ListConversations();
+    return result ?? [];
   }
 
   async deleteConversation(id: string): Promise<void> {
@@ -99,6 +100,36 @@ export class WailsService {
   async updateSetting(key: string, value: string): Promise<void> {
     if (!this.go) return;
     return this.go.UpdateSetting(key, value);
+  }
+
+  // ------------------------------------------
+  // Models
+  // ------------------------------------------
+
+  async listModels(): Promise<ModelDef[]> {
+    if (!this.go) return [];
+    const result = await this.go.ListModels();
+    return result ?? [];
+  }
+
+  async createModel(m: ModelDef): Promise<ModelDef> {
+    if (!this.go) return m;
+    return this.go.CreateModel(m);
+  }
+
+  async updateModel(m: ModelDef): Promise<void> {
+    if (!this.go) return;
+    return this.go.UpdateModel(m);
+  }
+
+  async deleteModel(id: string): Promise<void> {
+    if (!this.go) return;
+    return this.go.DeleteModel(id);
+  }
+
+  async setConversationModel(convId: string, modelId: string): Promise<void> {
+    if (!this.go) return;
+    return this.go.SetConversationModel(convId, modelId);
   }
 
   async submitToolResponse(requestId: string, response: string): Promise<void> {

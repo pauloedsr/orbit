@@ -36,6 +36,7 @@ type Message struct {
 	Model          string
 	ToolCalls      string
 	ToolCallID     string
+	Metadata       string // raw JSON; vazio = sem metadados específicos de provider
 	CreatedAt      time.Time
 }
 
@@ -108,6 +109,16 @@ func (d *Database) migrate() error {
 		`ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'edit'`,
 		`ALTER TABLE conversations ADD COLUMN plan_phase TEXT NOT NULL DEFAULT 'planning'`,
+		`ALTER TABLE messages ADD COLUMN metadata TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE IF NOT EXISTS models (
+			id             TEXT PRIMARY KEY,
+			friendly_name  TEXT NOT NULL,
+			context_window INTEGER NOT NULL DEFAULT 0,
+			temperature    REAL,
+			top_p          REAL,
+			max_tokens     INTEGER,
+			created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 
 	for _, m := range migrations {
@@ -214,12 +225,12 @@ func (d *Database) SetConversationMode(id, mode, planPhase string) error {
 // Messages CRUD
 // ---------------------------------------------------------------------------
 
-func (d *Database) AddMessage(conversationID, role, content, model, toolCalls, toolCallID string) (Message, error) {
+func (d *Database) AddMessage(conversationID, role, content, model, toolCalls, toolCallID, metadata string) (Message, error) {
 	id := uuid.NewString()
 	now := time.Now().UTC()
 	_, err := d.conn.Exec(
-		`INSERT INTO messages (id, conversation_id, role, content, model, tool_calls, tool_call_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, conversationID, role, content, model, toolCalls, toolCallID, now,
+		`INSERT INTO messages (id, conversation_id, role, content, model, tool_calls, tool_call_id, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, conversationID, role, content, model, toolCalls, toolCallID, metadata, now,
 	)
 	if err != nil {
 		return Message{}, err
@@ -232,13 +243,14 @@ func (d *Database) AddMessage(conversationID, role, content, model, toolCalls, t
 		ID: id, ConversationID: conversationID,
 		Role: role, Content: content, Model: model,
 		ToolCalls: toolCalls, ToolCallID: toolCallID,
+		Metadata:  metadata,
 		CreatedAt: now,
 	}, nil
 }
 
 func (d *Database) GetMessages(conversationID string) ([]Message, error) {
 	rows, err := d.conn.Query(
-		`SELECT id, conversation_id, role, content, model, tool_calls, tool_call_id, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`,
+		`SELECT id, conversation_id, role, content, model, tool_calls, tool_call_id, metadata, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`,
 		conversationID,
 	)
 	if err != nil {
@@ -249,12 +261,82 @@ func (d *Database) GetMessages(conversationID string) ([]Message, error) {
 	var out []Message
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Role, &m.Content, &m.Model, &m.ToolCalls, &m.ToolCallID, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Role, &m.Content, &m.Model, &m.ToolCalls, &m.ToolCallID, &m.Metadata, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// Models CRUD
+// ---------------------------------------------------------------------------
+
+type Model struct {
+	ID            string   `json:"id"`
+	FriendlyName  string   `json:"friendlyName"`
+	ContextWindow int      `json:"contextWindow"`
+	Temperature   *float64 `json:"temperature"`
+	TopP          *float64 `json:"topP"`
+	MaxTokens     *int     `json:"maxTokens"`
+}
+
+func (d *Database) ListModels() ([]Model, error) {
+	rows, err := d.conn.Query(
+		`SELECT id, friendly_name, context_window, temperature, top_p, max_tokens FROM models ORDER BY friendly_name ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Model
+	for rows.Next() {
+		var m Model
+		if err := rows.Scan(&m.ID, &m.FriendlyName, &m.ContextWindow, &m.Temperature, &m.TopP, &m.MaxTokens); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (d *Database) GetModel(id string) (Model, error) {
+	var m Model
+	err := d.conn.QueryRow(
+		`SELECT id, friendly_name, context_window, temperature, top_p, max_tokens FROM models WHERE id = ?`, id,
+	).Scan(&m.ID, &m.FriendlyName, &m.ContextWindow, &m.Temperature, &m.TopP, &m.MaxTokens)
+	return m, err
+}
+
+func (d *Database) CreateModel(m Model) (Model, error) {
+	_, err := d.conn.Exec(
+		`INSERT INTO models (id, friendly_name, context_window, temperature, top_p, max_tokens) VALUES (?, ?, ?, ?, ?, ?)`,
+		m.ID, m.FriendlyName, m.ContextWindow, m.Temperature, m.TopP, m.MaxTokens,
+	)
+	return m, err
+}
+
+func (d *Database) UpdateModel(m Model) error {
+	_, err := d.conn.Exec(
+		`UPDATE models SET friendly_name=?, context_window=?, temperature=?, top_p=?, max_tokens=? WHERE id=?`,
+		m.FriendlyName, m.ContextWindow, m.Temperature, m.TopP, m.MaxTokens, m.ID,
+	)
+	return err
+}
+
+func (d *Database) DeleteModel(id string) error {
+	_, err := d.conn.Exec(`DELETE FROM models WHERE id = ?`, id)
+	return err
+}
+
+func (d *Database) SetConversationModel(id, model, provider string) error {
+	_, err := d.conn.Exec(
+		`UPDATE conversations SET model=?, provider=?, updated_at=datetime('now') WHERE id=?`,
+		model, provider, id,
+	)
+	return err
 }
 
 // ---------------------------------------------------------------------------

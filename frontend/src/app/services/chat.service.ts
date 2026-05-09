@@ -1,13 +1,14 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { WailsService } from './wails.service';
 import {
-  Conversation, ConversationMode, Message, Settings, ToolInteraction, SubAgentSession, SubAgentIteration,
+  Conversation, ConversationMode, Message, ModelDef, Settings, ToolInteraction, SubAgentSession, SubAgentIteration,
   ChatThinkingPayload, ChatChunkPayload, ChatMessagePayload, ChatStoppedPayload,
 } from '../models/types';
 
 @Injectable({ providedIn: 'root' })
 export class ChatService {
   conversations = signal<Conversation[]>([]);
+  models = signal<ModelDef[]>([]);
   activeConversationId = signal<string | null>(null);
   openTabs = signal<string[]>([]);
   messagesByConv = signal<Map<string, Message[]>>(new Map());
@@ -169,6 +170,11 @@ export class ChatService {
     ]);
     this.conversations.set(convs);
     this.settings.set(settings);
+    // Separado para não quebrar o init se o backend ainda não tiver o método
+    try {
+      const models = await this.wails.listModels();
+      this.models.set(models ?? []);
+    } catch { }
   }
 
   async loadConversations() {
@@ -220,6 +226,17 @@ export class ChatService {
 
   async selectConversation(id: string) {
     await this.openTab(id);
+  }
+
+  async setConversationModel(convId: string, modelId: string) {
+    await this.wails.setConversationModel(convId, modelId);
+    this.conversations.update(cs =>
+      cs.map(c => c.id === convId ? { ...c, model: modelId } : c)
+    );
+  }
+
+  friendlyModelName(modelId: string): string {
+    return this.models().find(m => m.id === modelId)?.friendlyName ?? modelId;
   }
 
   async createConversation(title?: string) {

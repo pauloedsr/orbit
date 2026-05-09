@@ -38,7 +38,7 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 		return "Erro: LLM endpoint não configurado."
 	}
 	apiKey, _ := a.db.GetSetting("llm_api_key")
-	p := providers.NewOpenAIProvider("openai-compat", endpoint, apiKey)
+	p := providers.Resolve(providers.Config{Endpoint: endpoint, APIKey: apiKey, Model: model})
 
 	agentID := uuid.NewString()
 	runtime.EventsEmit(a.ctx, "subagent:start", map[string]any{
@@ -81,6 +81,7 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 
 		var buf strings.Builder
 		activeToolCalls := make(map[int]*providers.ToolCall)
+		var pendingMetadata map[string]any
 
 		for evt := range eventCh {
 			switch evt.Type {
@@ -98,6 +99,8 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 					activeToolCalls[evt.ToolCall.Index] = &providers.ToolCall{}
 				}
 				activeToolCalls[evt.ToolCall.Index].Arguments += evt.ToolCall.ArgDelta
+			case providers.EventDone:
+				pendingMetadata = evt.Metadata
 			}
 		}
 
@@ -128,6 +131,7 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 			Role:      "assistant",
 			Content:   buf.String(),
 			ToolCalls: tcs,
+			Metadata:  pendingMetadata,
 		})
 
 		// Executa as ferramentas sem interceptor de confirmação
