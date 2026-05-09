@@ -1,14 +1,15 @@
 import { Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ChatService } from '../../services/chat.service';
+import { UiStateService } from '../../services/ui-state.service';
+import { ConversationService } from '../../services/conversation.service';
 
 @Component({
   selector: 'app-rename-conversation-dialog',
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    @if (chat.renameConversation()) {
+    @if (ui.renameConversation()) {
       <div class="overlay" (click)="onOverlayClick()">
         <div class="dialog" (click)="$event.stopPropagation()">
           <div class="dialog-header">
@@ -183,7 +184,7 @@ export class RenameConversationDialogComponent {
   newTitle = '';
   isLoading = signal(false);
 
-  constructor(public chat: ChatService) { }
+  constructor(public ui: UiStateService, public convService: ConversationService) { }
 
   onKeydown(event: KeyboardEvent) {
     if (event.key === 'Enter' && !event.shiftKey && this.newTitle.trim() && !this.isLoading()) {
@@ -196,18 +197,18 @@ export class RenameConversationDialogComponent {
   }
 
   cancel() {
-    this.chat.renameConversation.set(null);
+    this.ui.renameConversation.set(null);
     this.newTitle = '';
   }
 
   async confirm() {
-    const renameData = this.chat.renameConversation();
+    const renameData = this.ui.renameConversation();
     if (!renameData || !this.newTitle.trim()) return;
 
     this.isLoading.set(true);
     try {
-      await this.chat.updateConversationTitle(renameData.id, this.newTitle.trim());
-      this.chat.renameConversation.set(null);
+      await this.convService.updateConversationTitle(renameData.id, this.newTitle.trim());
+      this.ui.renameConversation.set(null);
       this.newTitle = '';
     } catch (err) {
       console.error('Erro ao renomear:', err);

@@ -1,24 +1,24 @@
 import { Component } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ChatService } from '../../services/chat.service';
+import { ToolInteractionService } from '../../services/tool-interaction.service';
 
 @Component({
   selector: 'app-tool-interaction',
   standalone: true,
   imports: [FormsModule],
   template: `
-    @if (chat.pendingInteraction()) {
+    @if (toolInteraction.pendingInteraction()) {
       <div class="overlay">
         <div class="dialog">
 
-          @switch (chat.pendingInteraction()!.type) {
+          @switch (toolInteraction.pendingInteraction()!.type) {
 
             @case ('ask_text') {
               <div class="dialog-header">
                 <span class="icon">❓</span>
                 <span class="title">Pergunta do Agente</span>
               </div>
-              <p class="question">{{ chat.pendingInteraction()!.question }}</p>
+              <p class="question">{{ toolInteraction.pendingInteraction()!.question }}</p>
               <textarea
                 class="text-input"
                 [(ngModel)]="textValue"
@@ -39,9 +39,9 @@ import { ChatService } from '../../services/chat.service';
                 <span class="icon">❓</span>
                 <span class="title">Escolha uma opção</span>
               </div>
-              <p class="question">{{ chat.pendingInteraction()!.question }}</p>
+              <p class="question">{{ toolInteraction.pendingInteraction()!.question }}</p>
               <div class="choices">
-                @for (choice of chat.pendingInteraction()!.choices; track choice) {
+                @for (choice of toolInteraction.pendingInteraction()!.choices; track choice) {
                   <label class="choice-item" [class.selected]="selectedChoice === choice">
                     <input
                       type="radio"
@@ -82,9 +82,9 @@ import { ChatService } from '../../services/chat.service';
               </div>
               <div class="confirm-meta">
                 <span class="meta-label">Tool:</span>
-                <code class="tool-name">{{ chat.pendingInteraction()!.toolName }}</code>
+                <code class="tool-name">{{ toolInteraction.pendingInteraction()!.toolName }}</code>
               </div>
-              <pre class="details">{{ chat.pendingInteraction()!.details }}</pre>
+              <pre class="details">{{ toolInteraction.pendingInteraction()!.details }}</pre>
               <div class="actions confirm-actions">
                 <button class="btn-deny"   (click)="submitConfirm('deny')">Negar</button>
                 <div class="allow-group">
@@ -270,7 +270,7 @@ export class ToolInteractionComponent {
   selectedChoice = '';
   customText = '';
 
-  constructor(public chat: ChatService) {}
+  constructor(public toolInteraction: ToolInteractionService) {}
 
   onTextKeydown(event: KeyboardEvent) {
     if (event.key === 'Enter' && !event.shiftKey && this.textValue.trim()) {
@@ -280,25 +280,25 @@ export class ToolInteractionComponent {
   }
 
   submitText() {
-    const ia = this.chat.pendingInteraction();
+    const ia = this.toolInteraction.pendingInteraction();
     if (!ia || !this.textValue.trim()) return;
-    this.chat.submitInteraction(ia.id, this.textValue.trim());
+    this.toolInteraction.submitInteraction(ia.id, this.textValue.trim());
     this.textValue = '';
   }
 
   submitChoice() {
-    const ia = this.chat.pendingInteraction();
+    const ia = this.toolInteraction.pendingInteraction();
     if (!ia) return;
     const answer = this.customText.trim() || this.selectedChoice;
     if (!answer) return;
-    this.chat.submitInteraction(ia.id, answer);
+    this.toolInteraction.submitInteraction(ia.id, answer);
     this.selectedChoice = '';
     this.customText = '';
   }
 
   submitConfirm(decision: 'allow' | 'always' | 'deny') {
-    const ia = this.chat.pendingInteraction();
+    const ia = this.toolInteraction.pendingInteraction();
     if (!ia) return;
-    this.chat.submitInteraction(ia.id, decision);
+    this.toolInteraction.submitInteraction(ia.id, decision);
   }
 }

@@ -2,8 +2,13 @@ import { Component, ElementRef, ViewChild, AfterViewChecked, signal, computed, H
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MarkdownComponent } from 'ngx-markdown';
-import { ChatService } from '../../services/chat.service';
 import { WailsService } from '../../services/wails.service';
+import { ConversationService } from '../../services/conversation.service';
+import { MessageService } from '../../services/message.service';
+import { StreamService } from '../../services/stream.service';
+import { TabService } from '../../services/tab.service';
+import { SettingsService } from '../../services/settings.service';
+import { UiStateService } from '../../services/ui-state.service';
 import { TabBarComponent } from '../tab-bar/tab-bar.component';
 
 @Component({
@@ -14,20 +19,20 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
     <div class="chat-container">
       <!-- Header -->
       <div class="chat-header wails-drag">
-        @if (chat.activeConversation(); as conv) {
+        @if (convService.activeConversation(); as conv) {
           <div class="header-info wails-no-drag">
             <span class="header-title">{{ conv.title }}</span>
             <div class="model-selector" (click)="toggleModelPicker($event)">
-              <span class="header-model mono">{{ chat.friendlyModelName(conv.model) }}</span>
+              <span class="header-model mono">{{ settings.friendlyModelName(conv.model) }}</span>
               <svg class="chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                 <polyline points="2,3.5 5,6.5 8,3.5"/>
               </svg>
               @if (showModelPicker()) {
                 <div class="model-picker" (click)="$event.stopPropagation()">
-                  @if (chat.models().length === 0) {
+                  @if (settings.models().length === 0) {
                     <div class="model-empty">Nenhum modelo cadastrado.<br>Adicione em Settings → Modelos.</div>
                   }
-                  @for (m of chat.models(); track m.id) {
+                  @for (m of settings.models(); track m.id) {
                     <button
                       class="model-option"
                       [class.selected]="m.id === conv.model"
@@ -70,7 +75,7 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
           <button
             class="btn-toggle-sidebar"
             (click)="toggleSidebar()"
-            [title]="chat.sidebarVisible() ? 'Ocultar painel' : 'Mostrar painel'"
+            [title]="ui.sidebarVisible() ? 'Ocultar painel' : 'Mostrar painel'"
           >
             <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
               <rect x="1.5" y="1.5" width="12" height="12" rx="2"/>
@@ -81,23 +86,23 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
       </div>
 
       <!-- Tab bar -->
-      @if (chat.openTabs().length > 0) {
+      @if (tabService.openTabs().length > 0) {
         <app-tab-bar />
       }
 
       <!-- Messages -->
       <div class="messages-area" #messagesArea>
-        @if (!chat.activeConversationId()) {
+        @if (!tabService.activeConversationId()) {
           <div class="welcome">
             <div class="welcome-icon"><img src="assets/icon.png" alt="Orbit" /></div>
             <h2>Orbit</h2>
             <p>CLI power, rich interface.</p>
             <p class="hint mono">Ctrl+N para nova conversa</p>
           </div>
-        } @else if (chat.isLoading()) {
+        } @else if (messageService.isLoading()) {
           <div class="loading">Carregando...</div>
         } @else {
-          @for (msg of chat.messages(); track msg.id) {
+          @for (msg of messageService.messages(); track msg.id) {
             <div class="message" [class]="'message-' + msg.role">
               <div class="message-role mono">
                 {{ msg.role === 'user' ? '›' : '◉' }}
@@ -107,17 +112,17 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
             </div>
           }
 
-          @if (chat.error()) {
+          @if (messageService.error()) {
             <div class="message-error">
-              <span class="mono">⚠</span> {{ chat.error() }}
+              <span class="mono">⚠</span> {{ messageService.error() }}
             </div>
           }
 
-          @if (chat.isStreamingFor(chat.activeConversationId()!)) {
+          @if (streamService.isStreamingFor(tabService.activeConversationId()!)) {
             <div class="message message-assistant">
               <div class="message-role mono">◉ assistant</div>
-              @if (chat.streamingContentFor(chat.activeConversationId()!)) {
-                <markdown class="message-content" [data]="chat.streamingContentFor(chat.activeConversationId()!)" />
+              @if (streamService.streamingContentFor(tabService.activeConversationId()!)) {
+                <markdown class="message-content" [data]="streamService.streamingContentFor(tabService.activeConversationId()!)" />
               } @else {
                 <div class="message-content"><span class="cursor-blink">▊</span></div>
               }
@@ -127,7 +132,7 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
       </div>
 
       <!-- Input -->
-      @if (chat.activeConversationId()) {
+      @if (tabService.activeConversationId()) {
         <div class="input-area">
           <div class="input-row">
             <textarea
@@ -137,9 +142,9 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
               (keydown)="onKeydown($event)"
               placeholder="Mensagem... (Enter para enviar, Shift+Enter para nova linha)"
               rows="1"
-              [disabled]="chat.isStreamingFor(chat.activeConversationId()!)"
+              [disabled]="streamService.isStreamingFor(tabService.activeConversationId()!)"
             ></textarea>
-            @if (chat.isStreamingFor(chat.activeConversationId()!)) {
+            @if (streamService.isStreamingFor(tabService.activeConversationId()!)) {
               <button class="btn-stop" (click)="stop()" title="Parar geração">■</button>
             } @else {
               <button
@@ -152,16 +157,16 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
           <div class="input-meta">
             <button
               class="mode-badge"
-              [class]="'mode-' + chat.currentMode()"
+              [class]="'mode-' + convService.currentMode()"
               (click)="cycleMode()"
               title="Shift+Tab para alternar modo"
-            >{{ chat.currentMode().toUpperCase() }}</button>
-            @if (chat.currentMode() === 'plan' && chat.activeConversation()?.planPhase === 'planning' && chat.messages().length > 0) {
+            >{{ convService.currentMode().toUpperCase() }}</button>
+            @if (convService.currentMode() === 'plan' && convService.activeConversation()?.planPhase === 'planning' && messageService.messages().length > 0) {
               <button class="btn-implement" (click)="startPlanImplementation()">
                 ▶ Iniciar Implementação
               </button>
             }
-            @if (chat.currentMode() === 'plan' && chat.activeConversation()?.planPhase === 'implementing') {
+            @if (convService.currentMode() === 'plan' && convService.activeConversation()?.planPhase === 'implementing') {
               <span class="plan-phase-badge">implementando</span>
             }
           </div>
@@ -622,30 +627,35 @@ export class ChatComponent implements AfterViewChecked {
   isConnected = signal(false);
   showModelPicker = signal(false);
 
-  private readonly CTX_CIRCUMFERENCE = 2 * Math.PI * 8; // ~50.27
+  private readonly CTX_CIRCUMFERENCE = 2 * Math.PI * 8;
 
   ctxOffset = computed(() => {
-    const pct = this.chat.activeConversation()?.contextWindowUsage ?? 0;
+    const pct = this.convService.activeConversation()?.contextWindowUsage ?? 0;
     return this.CTX_CIRCUMFERENCE * (1 - pct / 100);
   });
 
   ctxColor = computed(() => {
-    const pct = this.chat.activeConversation()?.contextWindowUsage ?? 0;
+    const pct = this.convService.activeConversation()?.contextWindowUsage ?? 0;
     if (pct >= 90) return 'var(--error)';
     if (pct >= 70) return 'var(--warning)';
     return 'var(--success)';
   });
 
   ctxTitle = computed(() => {
-    const pct = this.chat.activeConversation()?.contextWindowUsage ?? 0;
+    const pct = this.convService.activeConversation()?.contextWindowUsage ?? 0;
     return `${Math.round(pct)}% da janela de contexto usada`;
   });
 
   private shouldScroll = false;
 
   constructor(
-    public chat: ChatService,
-    private wails: WailsService
+    public convService: ConversationService,
+    public messageService: MessageService,
+    public streamService: StreamService,
+    public tabService: TabService,
+    public settings: SettingsService,
+    public ui: UiStateService,
+    private wails: WailsService,
   ) {
     this.checkConnection();
   }
@@ -653,10 +663,10 @@ export class ChatComponent implements AfterViewChecked {
   @HostListener('document:keydown', ['$event'])
   onDocumentKeydown(event: KeyboardEvent) {
     if (event.key === 'Tab' && event.shiftKey) {
-      const convId = this.chat.activeConversationId();
+      const convId = this.tabService.activeConversationId();
       if (convId) {
         event.preventDefault();
-        this.chat.cycleMode(convId);
+        this.convService.cycleMode(convId);
       }
     }
   }
@@ -678,33 +688,33 @@ export class ChatComponent implements AfterViewChecked {
   }
 
   async send() {
-    const convId = this.chat.activeConversationId();
-    if (!this.inputText.trim() || !convId || this.chat.isStreamingFor(convId)) return;
+    const convId = this.tabService.activeConversationId();
+    if (!this.inputText.trim() || !convId || this.streamService.isStreamingFor(convId)) return;
 
     const content = this.inputText;
     this.inputText = '';
     this.shouldScroll = true;
 
-    await this.chat.sendMessage(content);
+    await this.streamService.sendMessage(content);
     this.shouldScroll = true;
 
     setTimeout(() => this.inputField?.nativeElement?.focus(), 50);
   }
 
   cycleMode() {
-    const convId = this.chat.activeConversationId();
-    if (convId) this.chat.cycleMode(convId);
+    const convId = this.tabService.activeConversationId();
+    if (convId) this.convService.cycleMode(convId);
   }
 
   async startPlanImplementation() {
-    const convId = this.chat.activeConversationId();
+    const convId = this.tabService.activeConversationId();
     if (!convId) return;
-    await this.chat.startPlanImplementation(convId);
-    await this.chat.sendMessage('Iniciando implementação conforme o plano.');
+    await this.convService.startPlanImplementation(convId);
+    await this.streamService.sendMessage('Iniciando implementação conforme o plano.');
   }
 
   toggleSidebar() {
-    this.chat.sidebarVisible.set(!this.chat.sidebarVisible());
+    this.ui.sidebarVisible.set(!this.ui.sidebarVisible());
   }
 
   toggleModelPicker(event: MouseEvent) {
@@ -714,7 +724,7 @@ export class ChatComponent implements AfterViewChecked {
 
   async selectModel(convId: string, modelId: string) {
     this.showModelPicker.set(false);
-    await this.chat.setConversationModel(convId, modelId);
+    await this.convService.setConversationModel(convId, modelId);
   }
 
   @HostListener('document:click')
@@ -723,8 +733,8 @@ export class ChatComponent implements AfterViewChecked {
   }
 
   stop() {
-    const convId = this.chat.activeConversationId();
-    if (convId) this.wails.stopStream(convId);
+    const convId = this.tabService.activeConversationId();
+    if (convId) this.streamService.stopStream(convId);
   }
 
   onKeydown(event: KeyboardEvent) {

@@ -2,67 +2,67 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/pauloedsr/orbit/backend/chat"
 	"github.com/pauloedsr/orbit/backend/config"
 	"github.com/pauloedsr/orbit/backend/db"
-	"github.com/pauloedsr/orbit/backend/providers"
+	"github.com/pauloedsr/orbit/backend/events"
+	"github.com/pauloedsr/orbit/backend/interaction"
+	"github.com/pauloedsr/orbit/backend/subagent"
 	"github.com/pauloedsr/orbit/backend/tools"
 	"github.com/pauloedsr/orbit/backend/tools/filesystem"
-	"github.com/pauloedsr/orbit/backend/tools/interaction"
+	toolinteraction "github.com/pauloedsr/orbit/backend/tools/interaction"
 	"github.com/pauloedsr/orbit/backend/tools/shell"
-	"github.com/pauloedsr/orbit/backend/tools/subagent"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	toolsubagent "github.com/pauloedsr/orbit/backend/tools/subagent"
 )
 
 // App é o struct principal exposto ao frontend via Wails bindings.
 // Cada método público vira uma função JS acessível em window.go.main.App
 type App struct {
-	ctx   context.Context
-	db    *db.Database
-	cfg   *config.Config
-	tools *tools.Registry
-
-	// Interação bloqueante com o frontend (ask / confirm)
-	pending   map[string]chan string
-	pendingMu sync.Mutex
-
-	// Allowlist de tools confirmadas com "sempre permitir"
-	allowlist   map[string]struct{}
-	allowlistMu sync.RWMutex
-
-	// Cancelamento de stream por conversa (botão Stop)
-	streamCancels   map[string]context.CancelFunc
-	streamCancelsMu sync.Mutex
+	ctx  context.Context
+	db   *db.Database
+	cfg  *config.Config
+	reg  *tools.Registry
+	ia   *interaction.Service
+	sa   *subagent.Service
+	chat *chat.Service
 }
 
 func NewApp(database *db.Database, cfg *config.Config) *App {
-	a := &App{
-		db:            database,
-		cfg:           cfg,
-		pending:       make(map[string]chan string),
-		allowlist:     make(map[string]struct{}),
-		streamCancels: make(map[string]context.CancelFunc),
-	}
-
 	reg := tools.New()
 	filesystem.Register(reg)
 	shell.Register(reg)
-	reg.Register(interaction.AskTextDef, a.handleAskText)
-	reg.Register(interaction.AskChoiceDef, a.handleAskChoice)
-	reg.Register(subagent.Def, a.handleSubAgent)
-	a.tools = reg
 
-	return a
+	ia := interaction.New(nil)
+	sa := subagent.New(nil, reg, database)
+
+	reg.Register(toolinteraction.AskTextDef, ia.HandleAskText)
+	reg.Register(toolinteraction.AskChoiceDef, ia.HandleAskChoice)
+	reg.Register(toolsubagent.Def, sa.AsToolHandler())
+
+	chatSvc := chat.New(nil, database, reg, ia)
+
+	return &App{
+		db:   database,
+		cfg:  cfg,
+		reg:  reg,
+		ia:   ia,
+		sa:   sa,
+		chat: chatSvc,
+	}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	emitter := events.NewWailsEmitter(ctx)
+	a.ia.SetEmitter(emitter)
+	a.ia.SetContext(ctx)
+	a.sa.SetEmitter(emitter)
+	a.sa.SetContext(ctx)
+	a.chat.SetEmitter(emitter)
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -119,7 +119,6 @@ func (a *App) SetConversationPinned(id string, pinned bool) error {
 }
 
 func (a *App) SetConversationMode(id, mode string) error {
-	// Resets plan_phase to 'planning' whenever mode changes
 	return a.db.SetConversationMode(id, mode, "planning")
 }
 
@@ -167,337 +166,19 @@ func (a *App) AddMessage(conversationID, role, content, model string) (MessageDT
 // ---------------------------------------------------------------------------
 
 func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
-	// 1. Valida configuração antes de persistir
-	endpoint, _ := a.db.GetSetting("llm_endpoint")
-	if endpoint == "" {
-		return MessageDTO{}, fmt.Errorf("LLM endpoint não configurado — abra Settings e configure o endpoint")
-	}
-	apiKey, _ := a.db.GetSetting("llm_api_key")
-
-	// 2. Persiste mensagem do usuário
-	_, err := a.db.AddMessage(conversationID, "user", content, "", "", "", "")
+	msg, err := a.chat.Send(a.ctx, conversationID, content)
 	if err != nil {
-		return MessageDTO{}, fmt.Errorf("save user msg: %w", err)
+		return MessageDTO{}, err
 	}
-
-	// 3. Carrega conversa (para saber o modelo) e histórico
-	conv, err := a.db.GetConversation(conversationID)
-	if err != nil {
-		return MessageDTO{}, fmt.Errorf("get conversation: %w", err)
-	}
-
-	// Conversa tem prioridade; settings serve como fallback para conversas antigas sem modelo
-	model := conv.Model
-	if model == "" {
-		model, _ = a.db.GetSetting("llm_model")
-	}
-
-	// Contexto cancelável por conversa — permite botão Stop sem afetar outras conversas
-	ctx, cancel := context.WithCancel(a.ctx)
-	a.streamCancelsMu.Lock()
-	a.streamCancels[conversationID] = cancel
-	a.streamCancelsMu.Unlock()
-	defer func() {
-		cancel()
-		a.streamCancelsMu.Lock()
-		delete(a.streamCancels, conversationID)
-		a.streamCancelsMu.Unlock()
-	}()
-
-	p := providers.Resolve(providers.Config{Endpoint: endpoint, APIKey: apiKey, Model: model})
-	var finalMsg db.Message
-
-	// Loop principal de Tool Calling
-	for {
-		dbMsgs, err := a.db.GetMessages(conversationID)
-		if err != nil {
-			return MessageDTO{}, fmt.Errorf("get messages: %w", err)
-		}
-
-		// 4. Sinaliza "pensando" para a UI
-		runtime.EventsEmit(a.ctx, "chat:thinking", map[string]any{
-			"conversationId": conversationID,
-		})
-
-		// 5. Monta payload mapeando tool_calls e metadata armazenados em JSON
-		provMsgs := make([]providers.Message, 0, len(dbMsgs))
-		for _, m := range dbMsgs {
-			var tcs []providers.ToolCall
-			if m.ToolCalls != "" {
-				json.Unmarshal([]byte(m.ToolCalls), &tcs) //nolint:errcheck
-			}
-			var meta map[string]any
-			if m.Metadata != "" {
-				json.Unmarshal([]byte(m.Metadata), &meta) //nolint:errcheck
-			}
-			provMsgs = append(provMsgs, providers.Message{
-				Role:       m.Role,
-				Content:    m.Content,
-				ToolCalls:  tcs,
-				ToolCallID: m.ToolCallID,
-				Metadata:   meta,
-			})
-		}
-
-		req := providers.Request{
-			Model:    model,
-			Messages: provMsgs,
-			Tools:    a.toolsForMode(conv.Mode, conv.PlanPhase),
-			Stream:   true,
-		}
-		if modelDef, err := a.db.GetModel(model); err == nil {
-			if modelDef.Temperature != nil {
-				req.Temperature = *modelDef.Temperature
-			}
-			if modelDef.TopP != nil {
-				req.TopP = *modelDef.TopP
-			}
-			if modelDef.MaxTokens != nil {
-				req.MaxTokens = *modelDef.MaxTokens
-			}
-		}
-
-		// Inject system prompt for plan mode by prepending a system message
-		if conv.Mode == "plan" {
-			req.Messages = append([]providers.Message{{Role: "system", Content: planSystemPrompt}}, req.Messages...)
-		}
-
-		// 6. Streaming — corre em goroutine com contexto cancelável
-		eventCh := make(chan providers.Event, 64)
-		errCh := make(chan error, 1)
-		go func() { errCh <- p.Stream(ctx, req, eventCh) }()
-
-		var buf strings.Builder
-		activeToolCalls := make(map[int]*providers.ToolCall)
-		var pendingMetadata map[string]any
-
-		for evt := range eventCh {
-			switch evt.Type {
-			case providers.EventTextDelta:
-				buf.WriteString(evt.Text)
-				runtime.EventsEmit(a.ctx, "chat:chunk", map[string]any{
-					"conversationId": conversationID,
-					"text":           evt.Text,
-				})
-			case providers.EventToolCallStart:
-				if activeToolCalls[evt.ToolCall.Index] == nil {
-					activeToolCalls[evt.ToolCall.Index] = &providers.ToolCall{
-						ID:   evt.ToolCall.ID,
-						Name: evt.ToolCall.Name,
-					}
-					msg := fmt.Sprintf("\n\n⚙️ Chamando ferramenta: `%s`\nParâmetros: ", evt.ToolCall.Name)
-					runtime.EventsEmit(a.ctx, "chat:chunk", map[string]any{
-						"conversationId": conversationID,
-						"text":           msg,
-					})
-				}
-			case providers.EventToolCallDelta:
-				if activeToolCalls[evt.ToolCall.Index] == nil {
-					activeToolCalls[evt.ToolCall.Index] = &providers.ToolCall{}
-				}
-				activeToolCalls[evt.ToolCall.Index].Arguments += evt.ToolCall.ArgDelta
-				runtime.EventsEmit(a.ctx, "chat:chunk", map[string]any{
-					"conversationId": conversationID,
-					"text":           evt.ToolCall.ArgDelta,
-				})
-			case providers.EventDone:
-				pendingMetadata = evt.Metadata
-			case providers.EventError:
-			}
-		}
-		if err := <-errCh; err != nil {
-			if errors.Is(err, context.Canceled) {
-				// Salva conteúdo parcial acumulado antes do stop
-				if buf.Len() > 0 {
-					partialMsg, _ := a.db.AddMessage(conversationID, "assistant", buf.String(), model, "", "", "")
-					runtime.EventsEmit(a.ctx, "chat:stopped", map[string]any{
-						"conversationId": conversationID,
-						"message":        toMsgDTO(partialMsg),
-					})
-				} else {
-					runtime.EventsEmit(a.ctx, "chat:stopped", map[string]any{
-						"conversationId": conversationID,
-						"message":        nil,
-					})
-				}
-				return MessageDTO{}, nil
-			}
-			return MessageDTO{}, fmt.Errorf("stream: %w", err)
-		}
-
-		// 7. Avalia Tool Calls invocadas ou finaliza o turno
-		if len(activeToolCalls) > 0 {
-			var tcs []providers.ToolCall
-			for i := 0; i < len(activeToolCalls); i++ {
-				if tc, ok := activeToolCalls[i]; ok {
-					tcs = append(tcs, *tc)
-				}
-			}
-			tcsJSON, _ := json.Marshal(tcs)
-
-			// Serializa metadata do provider (ex: thought signatures do Gemini) para persistir
-			metaJSON := ""
-			if len(pendingMetadata) > 0 {
-				if b, err := json.Marshal(pendingMetadata); err == nil {
-					metaJSON = string(b)
-				}
-			}
-			fmt.Printf("[Orbit] salvando assistant msg com toolCalls, metadata=%s\n", metaJSON)
-
-			msg, err := a.db.AddMessage(conversationID, "assistant", buf.String(), model, string(tcsJSON), "", metaJSON)
-			if err != nil {
-				return MessageDTO{}, fmt.Errorf("save assistant tool msg: %w", err)
-			}
-			runtime.EventsEmit(a.ctx, "chat:message", map[string]any{
-				"conversationId": conversationID,
-				"message":        toMsgDTO(msg),
-			})
-
-			// Executa ferramentas e injeta as respostas na conversa
-			for _, tc := range tcs {
-				// Subagentes herdam o model da conversa pai quando não especificado
-				if tc.Name == "run_subagent" {
-					var tcArgs map[string]any
-					if tc.Arguments != "" {
-						json.Unmarshal([]byte(tc.Arguments), &tcArgs) //nolint:errcheck
-					}
-					if tcArgs == nil {
-						tcArgs = map[string]any{}
-					}
-					if _, hasModel := tcArgs["model"]; !hasModel {
-						tcArgs["model"] = model
-						if b, err := json.Marshal(tcArgs); err == nil {
-							tc.Arguments = string(b)
-						}
-					}
-				}
-				result := a.executeToolCall(tc)
-				toolMsg, err := a.db.AddMessage(conversationID, "tool", result, model, "", tc.ID, "")
-				if err != nil {
-					return MessageDTO{}, fmt.Errorf("save tool result msg: %w", err)
-				}
-				runtime.EventsEmit(a.ctx, "chat:message", map[string]any{
-					"conversationId": conversationID,
-					"message":        toMsgDTO(toolMsg),
-				})
-			}
-
-			continue
-		}
-
-		// Sem tool calls, o LLM finalizou a resposta
-		msg, err := a.db.AddMessage(conversationID, "assistant", buf.String(), model, "", "", "")
-		if err != nil {
-			return MessageDTO{}, fmt.Errorf("save assistant msg: %w", err)
-		}
-		finalMsg = msg
-		runtime.EventsEmit(a.ctx, "chat:message", map[string]any{
-			"conversationId": conversationID,
-			"message":        toMsgDTO(finalMsg),
-		})
-
-		// Atualiza o percentual de uso da janela de contexto na conversa
-		if totalTokensRaw, ok := pendingMetadata["usage.total_tokens"]; ok {
-			if totalTokens, ok := totalTokensRaw.(int); ok && totalTokens > 0 {
-				if modelDef, err := a.db.GetModel(model); err == nil && modelDef.ContextWindow > 0 {
-					pct := float64(totalTokens) / float64(modelDef.ContextWindow) * 100
-					if pct > 100 {
-						pct = 100
-					}
-					_ = a.db.UpdateConversationContextWindowUsage(conversationID, pct)
-					runtime.EventsEmit(a.ctx, "chat:context_usage", map[string]any{
-						"conversationId": conversationID,
-						"percentage":     pct,
-						"totalTokens":    totalTokens,
-						"contextWindow":  modelDef.ContextWindow,
-					})
-				}
-			}
-		}
-
-		break
-	}
-
-	return toMsgDTO(finalMsg), nil
+	return toMsgDTO(msg), nil
 }
 
 func (a *App) StopStream(conversationID string) {
-	a.streamCancelsMu.Lock()
-	defer a.streamCancelsMu.Unlock()
-	if cancel, ok := a.streamCancels[conversationID]; ok {
-		cancel()
-	}
+	a.chat.Stop(conversationID)
 }
 
-// ---------------------------------------------------------------------------
-// Tool Execution
-// ---------------------------------------------------------------------------
-
-// askModeTools — only read-only filesystem tools.
-var askModeTools = map[string]bool{
-	"read_file": true, "tail_file": true, "search_files": true,
-	"grep_files": true, "grep_files_lines": true, "diff_file": true,
-}
-
-// planPlanningTools — read + shell queries + write for creating the plan file + interaction.
-var planPlanningTools = map[string]bool{
-	"read_file": true, "tail_file": true, "search_files": true,
-	"grep_files": true, "grep_files_lines": true, "diff_file": true,
-	"write_file": true, "run_shell": true, "run_shell_script": true,
-	"ask_user_text": true, "ask_user_choice": true,
-}
-
-const planSystemPrompt = `Você é Orbit, operando em MODO PLAN.
-
-FASE DE PLANEJAMENTO:
-- Utilize as ferramentas de leitura e shell (somente leitura/consulta) para compreender completamente o contexto do que o usuário precisa.
-- Crie ou atualize o arquivo de plano em .orbit/plans/<nome-descritivo>.md com seções claras: Objetivo, Contexto, Tarefas, Riscos.
-- Apresente um resumo executivo (ou mais detalhes quando necessário) ao usuário.
-- Solicite que o usuário clique em "Iniciar Implementação" para confirmar o início da execução.
-- NÃO faça modificações destrutivas ou alterações de código antes da confirmação.
-
-FASE DE IMPLEMENTAÇÃO (após confirmação do usuário):
-- Siga o plano criado fielmente.
-- Use todas as ferramentas disponíveis, incluindo subagentes para delegar tarefas.
-- Atualize o arquivo de plano marcando cada etapa concluída.`
-
-func filterTools(all []providers.Tool, allowed map[string]bool) []providers.Tool {
-	out := make([]providers.Tool, 0, len(allowed))
-	for _, t := range all {
-		if allowed[t.Name] {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
-func (a *App) toolsForMode(mode, planPhase string) []providers.Tool {
-	all := a.tools.Definitions()
-	switch mode {
-	case "ask":
-		return filterTools(all, askModeTools)
-	case "plan":
-		if planPhase == "implementing" {
-			return all
-		}
-		return filterTools(all, planPlanningTools)
-	default: // "edit"
-		return all
-	}
-}
-
-func (a *App) executeToolCall(tc providers.ToolCall) string {
-	fmt.Printf("[Orbit] Tool: '%s' | Args: %s\n", tc.Name, tc.Arguments)
-	var args map[string]any
-	if tc.Arguments != "" {
-		if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
-			return fmt.Sprintf("Erro ao parsear argumentos JSON: %v", err)
-		}
-	}
-	if denied := a.checkConfirm(tc.Name, args); denied != "" {
-		return denied
-	}
-	return a.tools.Dispatch(tc.Name, args)
+func (a *App) SubmitToolResponse(requestID, response string) {
+	a.ia.SubmitResponse(requestID, response)
 }
 
 // ---------------------------------------------------------------------------

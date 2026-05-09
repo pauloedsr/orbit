@@ -6,7 +6,9 @@ import { ToolInteractionComponent } from './components/tool-interaction/tool-int
 import { DeleteConfirmationDialogComponent } from './components/delete-confirmation-dialog/delete-confirmation-dialog.component';
 import { RenameConversationDialogComponent } from './components/rename-conversation-dialog/rename-conversation-dialog.component';
 import { SubAgentPanelComponent } from './components/subagent-panel/subagent-panel.component';
-import { ChatService } from './services/chat.service';
+import { UiStateService } from './services/ui-state.service';
+import { SubAgentService } from './services/sub-agent.service';
+import { ConversationService } from './services/conversation.service';
 
 @Component({
   selector: 'app-root',
@@ -15,14 +17,14 @@ import { ChatService } from './services/chat.service';
   template: `
     <div class="app-shell">
       <app-chat style="flex: 1; min-width: 0;" />
-      @if (chat.sidebarVisible()) {
+      @if (ui.sidebarVisible()) {
         <app-sidebar />
       }
-      @if (chat.subAgentPanelState() !== 'hidden') {
+      @if (subAgent.subAgentPanelState() !== 'hidden') {
         <app-subagent-panel />
       }
     </div>
-    @if (chat.showSettings()) {
+    @if (ui.showSettings()) {
       <app-settings />
     }
     <app-tool-interaction />
@@ -46,14 +48,17 @@ import { ChatService } from './services/chat.service';
   `]
 })
 export class AppComponent {
-  constructor(public chat: ChatService) { }
+  constructor(
+    public ui: UiStateService,
+    public subAgent: SubAgentService,
+    public convService: ConversationService,
+  ) { }
 
   @HostListener('window:keydown', ['$event'])
   handleKeyboard(event: KeyboardEvent) {
-    // Ctrl+N / Cmd+N — nova conversa
     if ((event.ctrlKey || event.metaKey) && event.key === 'n') {
       event.preventDefault();
-      this.chat.createConversation();
+      this.convService.createConversation();
     }
   }
 }

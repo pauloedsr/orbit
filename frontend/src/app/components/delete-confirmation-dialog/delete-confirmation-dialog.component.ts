@@ -1,13 +1,14 @@
 import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ChatService } from '../../services/chat.service';
+import { UiStateService } from '../../services/ui-state.service';
+import { ConversationService } from '../../services/conversation.service';
 
 @Component({
   selector: 'app-delete-confirmation-dialog',
   standalone: true,
   imports: [CommonModule],
   template: `
-    @if (chat.deleteConfirmation()) {
+    @if (ui.deleteConfirmation()) {
       <div class="overlay" (click)="onOverlayClick()">
         <div class="dialog" (click)="$event.stopPropagation()">
           <div class="dialog-header">
@@ -19,7 +20,7 @@ import { ChatService } from '../../services/chat.service';
             <p class="warning-text">Tem certeza que deseja excluir a conversa?</p>
             <div class="conversation-preview">
               <span class="preview-label">Conversa:</span>
-              <span class="preview-title">{{ chat.deleteConfirmation()!.title }}</span>
+              <span class="preview-title">{{ ui.deleteConfirmation()!.title }}</span>
             </div>
             <p class="danger-notice">⚠️ Esta ação não pode ser desfeita.</p>
           </div>
@@ -186,17 +187,17 @@ import { ChatService } from '../../services/chat.service';
   `]
 })
 export class DeleteConfirmationDialogComponent {
-  constructor(public chat: ChatService) { }
+  constructor(public ui: UiStateService, public convService: ConversationService) { }
 
   cancel() {
-    this.chat.deleteConfirmation.set(null);
+    this.ui.deleteConfirmation.set(null);
   }
 
   async confirm() {
-    const confirmation = this.chat.deleteConfirmation();
+    const confirmation = this.ui.deleteConfirmation();
     if (confirmation) {
-      this.chat.deleteConfirmation.set(null);
-      await this.chat.deleteConversation(confirmation.id);
+      this.ui.deleteConfirmation.set(null);
+      await this.convService.deleteConversation(confirmation.id);
     }
   }
 

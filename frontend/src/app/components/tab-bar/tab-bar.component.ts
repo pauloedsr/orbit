@@ -1,6 +1,9 @@
 import { Component, signal, HostListener, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ChatService } from '../../services/chat.service';
+import { TabService } from '../../services/tab.service';
+import { ConversationService } from '../../services/conversation.service';
+import { StreamService } from '../../services/stream.service';
+import { UiStateService } from '../../services/ui-state.service';
 
 interface ContextMenu {
   id: string;
@@ -14,20 +17,20 @@ interface ContextMenu {
   imports: [CommonModule],
   template: `
     <div class="tab-bar" (click)="closeContextMenu()">
-      @for (tabId of chat.openTabs(); track tabId) {
+      @for (tabId of tabService.openTabs(); track tabId) {
         @if (convFor(tabId); as conv) {
           <div
             class="tab"
-            [class.active]="tabId === chat.activeConversationId()"
-            [class.locked]="chat.tabLocked().get(tabId)"
+            [class.active]="tabId === tabService.activeConversationId()"
+            [class.locked]="tabService.tabLocked().get(tabId)"
             (click)="activate(tabId, $event)"
             (contextmenu)="onContextMenu($event, tabId)"
             (dblclick)="rename(tabId, conv.title)"
             title="{{ conv.title }}"
           >
-            @if (chat.isStreamingFor(tabId)) {
+            @if (streamService.isStreamingFor(tabId)) {
               <span class="tab-streaming-dot"></span>
-            } @else if (chat.tabLocked().get(tabId)) {
+            } @else if (tabService.tabLocked().get(tabId)) {
               <span class="tab-lock-icon">
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                   <rect x="2" y="4.5" width="6" height="4.5" rx="1"/>
@@ -36,7 +39,7 @@ interface ContextMenu {
               </span>
             }
             <span class="tab-title">{{ conv.title }}</span>
-            @if (!chat.tabLocked().get(tabId)) {
+            @if (!tabService.tabLocked().get(tabId)) {
               <button
                 class="tab-close"
                 (click)="close(tabId, $event)"
@@ -69,8 +72,8 @@ interface ContextMenu {
             </svg>
             Renomear
           </button>
-          <button class="ctx-item" (click)="chat.toggleTabLock(contextMenu()!.id); closeContextMenu()">
-            @if (chat.tabLocked().get(contextMenu()!.id)) {
+          <button class="ctx-item" (click)="tabService.toggleTabLock(contextMenu()!.id); closeContextMenu()">
+            @if (tabService.tabLocked().get(contextMenu()!.id)) {
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                 <rect x="2" y="5.5" width="8" height="5.5" rx="1.5"/>
                 <path d="M4 5.5V3.5a2 2 0 0 1 4 0v2"/>
@@ -86,7 +89,7 @@ interface ContextMenu {
             }
           </button>
           <div class="ctx-divider"></div>
-          <button class="ctx-item danger" [disabled]="!!chat.tabLocked().get(contextMenu()!.id)" (click)="close(contextMenu()!.id); closeContextMenu()">
+          <button class="ctx-item danger" [disabled]="!!tabService.tabLocked().get(contextMenu()!.id)" (click)="close(contextMenu()!.id); closeContextMenu()">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
               <line x1="2" y1="2" x2="10" y2="10"/>
               <line x1="10" y1="2" x2="2" y2="10"/>
@@ -265,7 +268,13 @@ interface ContextMenu {
 export class TabBarComponent {
   contextMenu = signal<ContextMenu | null>(null);
 
-  constructor(public chat: ChatService, private el: ElementRef) { }
+  constructor(
+    public tabService: TabService,
+    public convService: ConversationService,
+    public streamService: StreamService,
+    public ui: UiStateService,
+    private el: ElementRef,
+  ) { }
 
   @HostListener('document:click', ['$event'])
   onDocumentClick(event: MouseEvent) {
@@ -280,22 +289,22 @@ export class TabBarComponent {
   }
 
   convFor(id: string) {
-    return this.chat.conversations().find(c => c.id === id) ?? null;
+    return this.convService.conversations().find(c => c.id === id) ?? null;
   }
 
   activate(id: string, event: MouseEvent) {
     event.stopPropagation();
-    this.chat.setActiveTab(id);
+    this.tabService.setActiveTab(id);
     this.contextMenu.set(null);
   }
 
   close(id: string, event?: MouseEvent) {
     event?.stopPropagation();
-    this.chat.closeTab(id);
+    this.tabService.closeTab(id);
   }
 
   rename(id: string, currentTitle: string) {
-    this.chat.renameConversation.set({ id, currentTitle });
+    this.ui.renameConversation.set({ id, currentTitle });
   }
 
   onContextMenu(event: MouseEvent, id: string) {

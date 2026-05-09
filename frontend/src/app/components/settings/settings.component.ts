@@ -1,8 +1,8 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ChatService } from '../../services/chat.service';
-import { WailsService } from '../../services/wails.service';
+import { SettingsService } from '../../services/settings.service';
+import { UiStateService } from '../../services/ui-state.service';
 import { ModelDef, Provider } from '../../models/types';
 
 @Component({
@@ -55,9 +55,9 @@ import { ModelDef, Provider } from '../../models/types';
               <h2 class="section-title mono">Providers</h2>
               <p class="section-desc">Configure endpoints e API keys para cada provider LLM.</p>
 
-              @if (chat.providers().length > 0) {
+              @if (settings.providers().length > 0) {
                 <div class="item-list">
-                  @for (p of chat.providers(); track p.id) {
+                  @for (p of settings.providers(); track p.id) {
                     @if (providerEditingId() === p.id) {
                       <div class="item-form editing">
                         <div class="form-row">
@@ -158,9 +158,9 @@ import { ModelDef, Provider } from '../../models/types';
               <h2 class="section-title mono">Modelos cadastrados</h2>
               <p class="section-desc">Modelos de linguagem disponíveis para uso nas conversas.</p>
 
-              @if (chat.models().length > 0) {
+              @if (settings.models().length > 0) {
                 <div class="item-list">
-                  @for (m of chat.models(); track m.id) {
+                  @for (m of settings.models(); track m.id) {
                     @if (editingId() === m.id) {
                       <div class="item-form editing">
                         <div class="form-row">
@@ -168,7 +168,7 @@ import { ModelDef, Provider } from '../../models/types';
                             <label>Provider *</label>
                             <select [(ngModel)]="form.providerId">
                               <option value="" disabled>Selecione...</option>
-                              @for (p of chat.providers(); track p.id) {
+                              @for (p of settings.providers(); track p.id) {
                                 <option [value]="p.id">{{ p.name }}</option>
                               }
                             </select>
@@ -217,7 +217,7 @@ import { ModelDef, Provider } from '../../models/types';
                             @if (m.temperature !== null) { <span class="param-chip">t={{ m.temperature }}</span> }
                             @if (m.topP !== null) { <span class="param-chip">p={{ m.topP }}</span> }
                             @if (m.maxTokens !== null) { <span class="param-chip">max={{ m.maxTokens }}</span> }
-                            @if (m.providerId) { <span class="param-chip provider-chip">{{ chat.friendlyProviderName(m.providerId) }}</span> }
+                            @if (m.providerId) { <span class="param-chip provider-chip">{{ settings.friendlyProviderName(m.providerId) }}</span> }
                           </div>
                         </div>
                         <div class="item-row-actions">
@@ -249,7 +249,7 @@ import { ModelDef, Provider } from '../../models/types';
                       <label>Provider *</label>
                       <select [(ngModel)]="form.providerId">
                         <option value="" disabled>Selecione...</option>
-                        @for (p of chat.providers(); track p.id) {
+                        @for (p of settings.providers(); track p.id) {
                           <option [value]="p.id">{{ p.name }}</option>
                         }
                       </select>
@@ -673,13 +673,13 @@ export class SettingsComponent implements OnInit {
   savingGeneral = false;
   savedGeneral = false;
 
-  constructor(public chat: ChatService, private wails: WailsService) { }
+  constructor(public settings: SettingsService, public ui: UiStateService) { }
 
   async ngOnInit() {
-    this.defaultModelValue = this.chat.settings().defaultModel;
+    this.defaultModelValue = this.settings.settings().defaultModel;
   }
 
-  close() { this.chat.showSettings.set(false); }
+  close() { this.ui.showSettings.set(false); }
 
   // ---- General ----
 
@@ -687,8 +687,8 @@ export class SettingsComponent implements OnInit {
     this.savingGeneral = true;
     this.savedGeneral = false;
     try {
-      await this.wails.updateSetting('default_model', this.defaultModelValue.trim());
-      this.chat.settings.update(s => ({ ...s, defaultModel: this.defaultModelValue.trim() }));
+      await this.settings.updateSetting('default_model', this.defaultModelValue.trim());
+      this.settings.settings.update(s => ({ ...s, defaultModel: this.defaultModelValue.trim() }));
       this.savedGeneral = true;
       setTimeout(() => { this.savedGeneral = false; }, 2000);
     } finally {
@@ -708,10 +708,8 @@ export class SettingsComponent implements OnInit {
 
   async saveProviderNew() {
     if (!this.providerForm.name.trim() || !this.providerForm.apiUrl.trim()) return;
-    const p = this.toProviderDef();
     try {
-      const created = await this.wails.createProvider(p);
-      this.chat.providers.update(ps => [...ps, created]);
+      await this.settings.createProvider(this.toProviderDef());
       this.providerAddingNew.set(false);
     } catch (err) {
       console.error('Erro ao criar provider:', err);
@@ -728,10 +726,8 @@ export class SettingsComponent implements OnInit {
 
   async saveProviderEdit() {
     if (!this.providerForm.name.trim() || !this.providerForm.apiUrl.trim()) return;
-    const p = this.toProviderDef();
     try {
-      await this.wails.updateProvider(p);
-      this.chat.providers.update(ps => ps.map(x => x.id === p.id ? p : x));
+      await this.settings.updateProvider(this.toProviderDef());
       this.providerEditingId.set(null);
     } catch (err) {
       console.error('Erro ao atualizar provider:', err);
@@ -740,8 +736,7 @@ export class SettingsComponent implements OnInit {
 
   async deleteProvider(id: string) {
     try {
-      await this.wails.deleteProvider(id);
-      this.chat.providers.update(ps => ps.filter(p => p.id !== id));
+      await this.settings.deleteProvider(id);
     } catch (err) {
       console.error('Erro ao excluir provider:', err);
     }
@@ -776,10 +771,8 @@ export class SettingsComponent implements OnInit {
 
   async saveNew() {
     if (!this.form.id.trim() || !this.form.friendlyName.trim()) return;
-    const m = this.toModelDef();
     try {
-      const created = await this.wails.createModel(m);
-      this.chat.models.update(ms => [...ms, created]);
+      await this.settings.createModel(this.toModelDef());
       this.addingNew.set(false);
     } catch (err) {
       console.error('Erro ao criar modelo:', err);
@@ -804,10 +797,8 @@ export class SettingsComponent implements OnInit {
 
   async saveEdit() {
     if (!this.form.friendlyName.trim()) return;
-    const m = this.toModelDef();
     try {
-      await this.wails.updateModel(m);
-      this.chat.models.update(ms => ms.map(x => x.id === m.id ? m : x));
+      await this.settings.updateModel(this.toModelDef());
       this.editingId.set(null);
     } catch (err) {
       console.error('Erro ao atualizar modelo:', err);
@@ -816,8 +807,7 @@ export class SettingsComponent implements OnInit {
 
   async deleteModel(id: string) {
     try {
-      await this.wails.deleteModel(id);
-      this.chat.models.update(ms => ms.filter(m => m.id !== id));
+      await this.settings.deleteModel(id);
     } catch (err) {
       console.error('Erro ao excluir modelo:', err);
     }

@@ -1,5 +1,5 @@
 import { Component, inject } from '@angular/core';
-import { ChatService } from '../../services/chat.service';
+import { SubAgentService } from '../../services/sub-agent.service';
 import { SubAgentSession } from '../../models/types';
 
 @Component({
@@ -7,7 +7,7 @@ import { SubAgentSession } from '../../models/types';
   standalone: true,
   imports: [],
   template: `
-    <aside class="panel" [class.panel--fading]="chat.subAgentPanelState() === 'fading'">
+    <aside class="panel" [class.panel--fading]="subAgent.subAgentPanelState() === 'fading'">
 
       <div class="panel-header">
         <span class="panel-icon">⚙</span>
@@ -284,10 +284,10 @@ import { SubAgentSession } from '../../models/types';
   `]
 })
 export class SubAgentPanelComponent {
-  chat = inject(ChatService);
+  subAgent = inject(SubAgentService);
 
   agentList(): SubAgentSession[] {
-    return [...this.chat.activeSubAgents().values()];
+    return [...this.subAgent.activeSubAgents().values()];
   }
 
   truncate(text: string, maxLen: number): string {

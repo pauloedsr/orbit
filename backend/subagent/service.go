@@ -1,63 +1,85 @@
-package main
+package subagent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/pauloedsr/orbit/backend/events"
 	"github.com/pauloedsr/orbit/backend/providers"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/pauloedsr/orbit/backend/tools"
 )
 
-// handleSubAgent é o handler registrado no registry para a tool run_subagent.
-func (a *App) handleSubAgent(args map[string]any) string {
-	prompt, _ := args["prompt"].(string)
-	if prompt == "" {
-		return "Erro: campo 'prompt' é obrigatório."
-	}
-
-	model, _ := args["model"].(string)
-	if model == "" {
-		model, _ = a.db.GetSetting("llm_model")
-	}
-
-	maxIter := 10
-	if n, ok := args["max_iterations"].(float64); ok && n > 0 {
-		maxIter = int(n)
-	}
-
-	return a.runSubAgent(prompt, model, maxIter)
+type dbReader interface {
+	GetSetting(key string) (string, error)
 }
 
-// runSubAgent executa um loop completo de raciocínio + ferramentas, emitindo
-// eventos ao frontend para exibição em tempo real no painel de sub-agentes.
-func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
-	endpoint, _ := a.db.GetSetting("llm_endpoint")
+// Service executes sub-agent loops and emits progress events.
+type Service struct {
+	emitter events.Emitter
+	reg     *tools.Registry
+	db      dbReader
+	appCtx  context.Context
+}
+
+func New(emitter events.Emitter, reg *tools.Registry, db dbReader) *Service {
+	return &Service{emitter: emitter, reg: reg, db: db, appCtx: context.Background()}
+}
+
+func (s *Service) SetEmitter(emitter events.Emitter) { s.emitter = emitter }
+func (s *Service) SetContext(ctx context.Context)    { s.appCtx = ctx }
+
+// AsToolHandler returns a tools.Handler closure for registration in the Registry.
+func (s *Service) AsToolHandler() tools.Handler {
+	return func(args map[string]any) string {
+		prompt, _ := args["prompt"].(string)
+		if prompt == "" {
+			return "Erro: campo 'prompt' é obrigatório."
+		}
+
+		model, _ := args["model"].(string)
+		if model == "" {
+			model, _ = s.db.GetSetting("llm_model")
+		}
+
+		maxIter := 10
+		if n, ok := args["max_iterations"].(float64); ok && n > 0 {
+			maxIter = int(n)
+		}
+
+		return s.Run(s.appCtx, prompt, model, maxIter)
+	}
+}
+
+// Run executes the full reasoning+tool loop for a sub-agent.
+func (s *Service) Run(ctx context.Context, prompt, model string, maxIterations int) string {
+	endpoint, _ := s.db.GetSetting("llm_endpoint")
 	if endpoint == "" {
 		return "Erro: LLM endpoint não configurado."
 	}
-	apiKey, _ := a.db.GetSetting("llm_api_key")
+	apiKey, _ := s.db.GetSetting("llm_api_key")
 	p := providers.Resolve(providers.Config{Endpoint: endpoint, APIKey: apiKey, Model: model})
 
 	agentID := uuid.NewString()
-	runtime.EventsEmit(a.ctx, "subagent:start", map[string]any{
+	s.emitter.Emit("subagent:start", map[string]any{
 		"id":     agentID,
 		"prompt": prompt,
 		"model":  model,
 	})
 
-	emitIteration := func(iter int, phase string, tools []string) {
-		runtime.EventsEmit(a.ctx, "subagent:iteration", map[string]any{
+	emitIteration := func(iter int, phase string, toolNames []string) {
+		s.emitter.Emit("subagent:iteration", map[string]any{
 			"agentId":   agentID,
 			"iteration": iter,
 			"phase":     phase,
-			"tools":     tools,
+			"tools":     toolNames,
 		})
 	}
 
 	emitDone := func(success bool) {
-		runtime.EventsEmit(a.ctx, "subagent:done", map[string]any{
+		s.emitter.Emit("subagent:done", map[string]any{
 			"agentId": agentID,
 			"success": success,
 		})
@@ -71,13 +93,13 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 		req := providers.Request{
 			Model:    model,
 			Messages: msgs,
-			Tools:    a.subAgentTools(),
+			Tools:    s.subAgentTools(),
 			Stream:   true,
 		}
 
 		eventCh := make(chan providers.Event, 64)
 		errCh := make(chan error, 1)
-		go func() { errCh <- p.Stream(a.ctx, req, eventCh) }()
+		go func() { errCh <- p.Stream(ctx, req, eventCh) }()
 
 		var buf strings.Builder
 		activeToolCalls := make(map[int]*providers.ToolCall)
@@ -109,13 +131,11 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 			return fmt.Sprintf("Erro no sub-agente (iteração %d): %v", iter+1, err)
 		}
 
-		// Sem tool calls — sub-agente finalizou
 		if len(activeToolCalls) == 0 {
 			emitDone(true)
 			return buf.String()
 		}
 
-		// Coleta nomes das tools na ordem de índice
 		tcs := make([]providers.ToolCall, 0, len(activeToolCalls))
 		toolNames := make([]string, 0, len(activeToolCalls))
 		for i := 0; i < len(activeToolCalls); i++ {
@@ -134,13 +154,12 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 			Metadata:  pendingMetadata,
 		})
 
-		// Executa as ferramentas sem interceptor de confirmação
 		for _, tc := range tcs {
 			var tcArgs map[string]any
 			if tc.Arguments != "" {
-				json.Unmarshal([]byte(tc.Arguments), &tcArgs)
+				json.Unmarshal([]byte(tc.Arguments), &tcArgs) //nolint:errcheck
 			}
-			result := a.subAgentDispatch(tc.Name, tcArgs)
+			result := s.subAgentDispatch(tc.Name, tcArgs)
 			msgs = append(msgs, providers.Message{
 				Role:       "tool",
 				Content:    result,
@@ -155,15 +174,13 @@ func (a *App) runSubAgent(prompt, model string, maxIterations int) string {
 	return fmt.Sprintf("Sub-agente atingiu o limite de %d iterações sem concluir.", maxIterations)
 }
 
-// subAgentTools retorna os schemas de tools disponíveis para sub-agentes,
-// excluindo ferramentas interativas que exigem resposta do usuário.
-func (a *App) subAgentTools() []providers.Tool {
+func (s *Service) subAgentTools() []providers.Tool {
 	excluded := map[string]bool{
 		"ask_user_text":   true,
 		"ask_user_choice": true,
-		"run_subagent":    true, // evita recursão infinita
+		"run_subagent":    true,
 	}
-	all := a.tools.Definitions()
+	all := s.reg.Definitions()
 	result := make([]providers.Tool, 0, len(all))
 	for _, t := range all {
 		if !excluded[t.Name] {
@@ -173,14 +190,12 @@ func (a *App) subAgentTools() []providers.Tool {
 	return result
 }
 
-// subAgentDispatch executa uma tool para o sub-agente sem interceptor de confirmação
-// e retorna erro claro para ferramentas interativas se chamadas diretamente.
-func (a *App) subAgentDispatch(name string, args map[string]any) string {
+func (s *Service) subAgentDispatch(name string, args map[string]any) string {
 	switch name {
 	case "ask_user_text", "ask_user_choice":
 		return "Erro: ferramentas interativas não estão disponíveis em sub-agentes."
 	case "run_subagent":
 		return "Erro: sub-agentes não podem chamar run_subagent recursivamente."
 	}
-	return a.tools.Dispatch(name, args)
+	return s.reg.Dispatch(name, args)
 }

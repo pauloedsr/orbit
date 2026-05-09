@@ -1,6 +1,9 @@
 import { Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ChatService } from '../../services/chat.service';
+import { ConversationService } from '../../services/conversation.service';
+import { TabService } from '../../services/tab.service';
+import { StreamService } from '../../services/stream.service';
+import { UiStateService } from '../../services/ui-state.service';
 
 @Component({
   selector: 'app-sidebar',
@@ -22,16 +25,16 @@ import { ChatService } from '../../services/chat.service';
       </div>
 
       <div class="conversation-list">
-        @for (conv of chat.conversations(); track conv.id) {
+        @for (conv of convService.conversations(); track conv.id) {
           <div class="conv-item-wrapper">
             <button
               class="conv-item"
-              [class.active]="conv.id === chat.activeConversationId()"
-              (click)="chat.selectConversation(conv.id)"
+              [class.active]="conv.id === tabService.activeConversationId()"
+              (click)="convService.selectConversation(conv.id)"
             >
               <div class="conv-title-row">
                 <span class="conv-title">{{ conv.title }}</span>
-                @if (chat.isStreamingFor(conv.id)) {
+                @if (streamService.isStreamingFor(conv.id)) {
                   <span class="streaming-dot" title="Processando..."></span>
                 } @else if (conv.pinned) {
                   <span class="pin-icon">📌</span>
@@ -71,7 +74,7 @@ import { ChatService } from '../../services/chat.service';
       </div>
 
       <div class="sidebar-footer">
-        <button class="btn-settings" title="Configurações" (click)="chat.showSettings.set(true)">
+        <button class="btn-settings" title="Configurações" (click)="ui.showSettings.set(true)">
           ⚙ Settings
         </button>
       </div>
@@ -333,10 +336,15 @@ import { ChatService } from '../../services/chat.service';
 export class SidebarComponent {
   openMenuId = signal<string | null>(null);
 
-  constructor(public chat: ChatService) { }
+  constructor(
+    public convService: ConversationService,
+    public tabService: TabService,
+    public streamService: StreamService,
+    public ui: UiStateService,
+  ) { }
 
   async newChat() {
-    await this.chat.createConversation();
+    await this.convService.createConversation();
   }
 
   toggleMenu(convId: string) {
@@ -344,18 +352,18 @@ export class SidebarComponent {
   }
 
   confirmDelete(convId: string, title: string) {
-    this.chat.deleteConfirmation.set({ id: convId, title });
+    this.ui.deleteConfirmation.set({ id: convId, title });
     this.openMenuId.set(null);
   }
 
   openRenameDialog(convId: string, currentTitle: string) {
-    this.chat.renameConversation.set({ id: convId, currentTitle });
+    this.ui.renameConversation.set({ id: convId, currentTitle });
     this.openMenuId.set(null);
   }
 
   async togglePin(convId: string, currentlyPinned: boolean) {
     try {
-      await this.chat.toggleConversationPinned(convId);
+      await this.convService.toggleConversationPinned(convId);
     } catch (err) {
       console.error('Erro ao fixar/desafixar conversa:', err);
     }
@@ -364,7 +372,7 @@ export class SidebarComponent {
 
   async deleteConversation(convId: string) {
     try {
-      await this.chat.deleteConversation(convId);
+      await this.convService.deleteConversation(convId);
     } catch (err) {
       console.error('Erro ao excluir conversa:', err);
     }
