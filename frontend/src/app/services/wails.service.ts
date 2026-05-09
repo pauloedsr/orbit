@@ -1,5 +1,5 @@
 import { Injectable, NgZone } from '@angular/core';
-import { Conversation, ConversationMode, Message, ModelDef, Settings } from '../models/types';
+import { Conversation, ConversationMode, Message, ModelDef, Provider, Settings } from '../models/types';
 
 /**
  * WailsService encapsula todas as chamadas ao backend Go.
@@ -93,7 +93,7 @@ export class WailsService {
   // ------------------------------------------
 
   async getSettings(): Promise<Settings> {
-    if (!this.go) return { defaultModel: 'mock', defaultProvider: 'mock', theme: 'dark', llmEndpoint: '', llmApiKey: '', llmModel: '' };
+    if (!this.go) return { defaultModel: 'mock', defaultProvider: 'mock', theme: 'dark' };
     return this.go.GetSettings();
   }
 
@@ -125,6 +125,30 @@ export class WailsService {
   async deleteModel(id: string): Promise<void> {
     if (!this.go) return;
     return this.go.DeleteModel(id);
+  }
+
+  // ------------------------------------------
+  // Providers
+  // ------------------------------------------
+
+  async listProviders(): Promise<Provider[]> {
+    if (!this.go?.ListProviders) return [];
+    return (await this.go.ListProviders()) ?? [];
+  }
+
+  async createProvider(p: Provider): Promise<Provider> {
+    if (!this.go?.CreateProvider) return p;
+    return this.go.CreateProvider(p);
+  }
+
+  async updateProvider(p: Provider): Promise<void> {
+    if (!this.go?.UpdateProvider) return;
+    return this.go.UpdateProvider(p);
+  }
+
+  async deleteProvider(id: string): Promise<void> {
+    if (!this.go?.DeleteProvider) return;
+    return this.go.DeleteProvider(id);
   }
 
   async setConversationModel(convId: string, modelId: string): Promise<void> {

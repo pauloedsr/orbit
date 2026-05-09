@@ -4,11 +4,19 @@
 
 export interface ModelDef {
   id: string;
+  providerId: string;
   friendlyName: string;
   contextWindow: number;
   temperature:   number | null;
   topP:          number | null;
   maxTokens:     number | null;
+}
+
+export interface Provider {
+  id: string;
+  name: string;
+  apiUrl: string;
+  apiKey: string;
 }
 
 export type ConversationMode = 'ask' | 'edit' | 'plan';
@@ -42,9 +50,6 @@ export interface Settings {
   defaultModel: string;
   defaultProvider: string;
   theme: string;
-  llmEndpoint: string;
-  llmApiKey: string;
-  llmModel: string;
 }
 
 // Estado da UI — não persiste no backend

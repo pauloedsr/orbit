@@ -3,78 +3,190 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ChatService } from '../../services/chat.service';
 import { WailsService } from '../../services/wails.service';
-import { ModelDef } from '../../models/types';
+import { ModelDef, Provider } from '../../models/types';
 
 @Component({
   selector: 'app-settings',
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <div class="overlay" (click)="close()">
-      <div class="panel" (click)="$event.stopPropagation()">
+    <div class="settings-screen">
 
-        <div class="panel-header">
-          <span class="panel-title">Settings</span>
-          <div class="panel-tabs">
-            <button class="tab-btn" [class.active]="activeTab() === 'provider'" (click)="activeTab.set('provider')">Provider</button>
-            <button class="tab-btn" [class.active]="activeTab() === 'models'" (click)="activeTab.set('models')">Modelos</button>
-          </div>
-          <button class="btn-close" (click)="close()">✕</button>
-        </div>
+      <!-- Header -->
+      <div class="settings-header">
+        <span class="settings-title">Settings</span>
+        <button class="btn-close" (click)="close()">✕</button>
+      </div>
 
-        <div class="panel-body">
+      <div class="settings-body">
 
-          <!-- Tab: Provider -->
-          @if (activeTab() === 'provider') {
+        <!-- Sidebar -->
+        <nav class="settings-sidebar">
+          <button class="nav-item" [class.active]="activeTab() === 'providers'" (click)="activeTab.set('providers')">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="4" cy="4" r="2"/><circle cx="10" cy="10" r="2"/>
+              <path d="M6 4h2a2 2 0 0 1 2 2v2"/>
+            </svg>
+            Providers
+          </button>
+          <button class="nav-item" [class.active]="activeTab() === 'models'" (click)="activeTab.set('models')">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <rect x="1" y="1" width="12" height="3" rx="1"/>
+              <rect x="1" y="5.5" width="12" height="3" rx="1"/>
+              <rect x="1" y="10" width="12" height="3" rx="1"/>
+            </svg>
+            Modelos
+          </button>
+          <button class="nav-item" [class.active]="activeTab() === 'general'" (click)="activeTab.set('general')">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <circle cx="7" cy="7" r="2"/>
+              <path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.93 2.93l1.41 1.41M9.66 9.66l1.41 1.41M2.93 11.07l1.41-1.41M9.66 4.34l1.41-1.41"/>
+            </svg>
+            Geral
+          </button>
+        </nav>
+
+        <!-- Content -->
+        <div class="settings-content">
+
+          <!-- Providers -->
+          @if (activeTab() === 'providers') {
             <section class="section">
-              <h3 class="section-title mono">LLM Provider</h3>
+              <h2 class="section-title mono">Providers</h2>
+              <p class="section-desc">Configure endpoints e API keys para cada provider LLM.</p>
 
-              <div class="field">
-                <label>Endpoint</label>
-                <input type="url" [(ngModel)]="endpoint" placeholder="https://api.openai.com/v1" spellcheck="false" />
-                <span class="hint">Base URL compatível com OpenAI (sem barra final)</span>
-              </div>
+              @if (chat.providers().length > 0) {
+                <div class="item-list">
+                  @for (p of chat.providers(); track p.id) {
+                    @if (providerEditingId() === p.id) {
+                      <div class="item-form editing">
+                        <div class="form-row">
+                          <div class="field-sm">
+                            <label>Nome *</label>
+                            <input type="text" [(ngModel)]="providerForm.name" placeholder="OpenAI" spellcheck="false" />
+                          </div>
+                          <div class="field-sm">
+                            <label>API URL *</label>
+                            <input type="url" [(ngModel)]="providerForm.apiUrl" placeholder="https://api.openai.com/v1" spellcheck="false" />
+                          </div>
+                        </div>
+                        <div class="field">
+                          <label>API Key</label>
+                          <div class="input-row">
+                            <input [type]="providerShowKey() === p.id ? 'text' : 'password'"
+                                   [(ngModel)]="providerForm.apiKey" placeholder="sk-..." spellcheck="false" autocomplete="off" />
+                            <button class="btn-toggle-key" (click)="toggleProviderKey(p.id)">
+                              {{ providerShowKey() === p.id ? 'Ocultar' : 'Mostrar' }}
+                            </button>
+                          </div>
+                        </div>
+                        <div class="form-actions">
+                          <button class="btn-sm btn-primary" (click)="saveProviderEdit()" [disabled]="!providerForm.name.trim() || !providerForm.apiUrl.trim()">Salvar</button>
+                          <button class="btn-sm btn-ghost" (click)="cancelProviderEdit()">Cancelar</button>
+                        </div>
+                      </div>
+                    } @else {
+                      <div class="item-row">
+                        <div class="item-row-info">
+                          <span class="item-row-name">{{ p.name }}</span>
+                          <span class="item-row-id mono">{{ p.apiUrl }}</span>
+                          <span class="param-chip">{{ p.apiKey ? 'API Key: ••••••' : 'sem API Key' }}</span>
+                        </div>
+                        <div class="item-row-actions">
+                          <button class="btn-icon" (click)="startProviderEdit(p)" title="Editar">
+                            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                              <path d="M8.5 1.5L11.5 4.5L5 11H2V8L8.5 1.5Z"/>
+                            </svg>
+                          </button>
+                          <button class="btn-icon danger" (click)="deleteProvider(p.id)" title="Excluir">
+                            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                              <polyline points="1,3 12,3"/>
+                              <path d="M4,3V2a1,1 0 0 1,1-1h3a1,1 0 0 1,1,1v1"/>
+                              <rect x="2" y="3" width="9" height="9" rx="1"/>
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    }
+                  }
+                </div>
+              } @else {
+                <p class="empty-hint">Nenhum provider cadastrado ainda.</p>
+              }
 
-              <div class="field">
-                <label>API Key</label>
-                <input [type]="showKey ? 'text' : 'password'" [(ngModel)]="apiKey" placeholder="sk-..." spellcheck="false" autocomplete="off" />
-                <button class="btn-toggle-key" (click)="showKey = !showKey">{{ showKey ? 'Ocultar' : 'Mostrar' }}</button>
-              </div>
-
-              <div class="field">
-                <label>Modelo padrão (fallback)</label>
-                <input type="text" [(ngModel)]="model" placeholder="gpt-4o" spellcheck="false" />
-                <span class="hint">Usado quando a conversa não tem modelo selecionado</span>
-              </div>
+              @if (providerAddingNew()) {
+                <div class="item-form">
+                  <div class="form-row">
+                    <div class="field-sm">
+                      <label>Nome *</label>
+                      <input type="text" [(ngModel)]="providerForm.name" placeholder="OpenAI" spellcheck="false" />
+                    </div>
+                    <div class="field-sm">
+                      <label>API URL *</label>
+                      <input type="url" [(ngModel)]="providerForm.apiUrl" placeholder="https://api.openai.com/v1" spellcheck="false" />
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label>API Key</label>
+                    <div class="input-row">
+                      <input [type]="providerShowKey() === '__new' ? 'text' : 'password'"
+                             [(ngModel)]="providerForm.apiKey" placeholder="sk-..." spellcheck="false" autocomplete="off" />
+                      <button class="btn-toggle-key" (click)="toggleProviderKey('__new')">
+                        {{ providerShowKey() === '__new' ? 'Ocultar' : 'Mostrar' }}
+                      </button>
+                    </div>
+                  </div>
+                  <div class="form-actions">
+                    <button class="btn-sm btn-primary" (click)="saveProviderNew()" [disabled]="!providerForm.name.trim() || !providerForm.apiUrl.trim()">Adicionar</button>
+                    <button class="btn-sm btn-ghost" (click)="cancelProviderAdd()">Cancelar</button>
+                  </div>
+                </div>
+              } @else {
+                <button class="btn-add" (click)="startProviderAdd()">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                    <line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/>
+                  </svg>
+                  Adicionar provider
+                </button>
+              }
             </section>
           }
 
-          <!-- Tab: Modelos -->
+          <!-- Modelos -->
           @if (activeTab() === 'models') {
             <section class="section">
-              <h3 class="section-title mono">Modelos cadastrados</h3>
+              <h2 class="section-title mono">Modelos cadastrados</h2>
+              <p class="section-desc">Modelos de linguagem disponíveis para uso nas conversas.</p>
 
-              <!-- Lista -->
               @if (chat.models().length > 0) {
-                <div class="model-list">
+                <div class="item-list">
                   @for (m of chat.models(); track m.id) {
                     @if (editingId() === m.id) {
-                      <div class="model-form editing">
+                      <div class="item-form editing">
                         <div class="form-row">
                           <div class="field-sm">
+                            <label>Provider *</label>
+                            <select [(ngModel)]="form.providerId">
+                              <option value="" disabled>Selecione...</option>
+                              @for (p of chat.providers(); track p.id) {
+                                <option [value]="p.id">{{ p.name }}</option>
+                              }
+                            </select>
+                          </div>
+                          <div class="field-sm">
                             <label>ID (API)</label>
-                            <input type="text" [(ngModel)]="form.id" placeholder="gpt-4o" spellcheck="false" [disabled]="true" />
+                            <input type="text" [(ngModel)]="form.id" placeholder="gpt-4o" spellcheck="false" />
                           </div>
                           <div class="field-sm">
                             <label>Nome amigável</label>
                             <input type="text" [(ngModel)]="form.friendlyName" placeholder="GPT-4o" spellcheck="false" />
                           </div>
+                        </div>
+                        <div class="form-row">
                           <div class="field-sm">
                             <label>Contexto (k tokens)</label>
                             <input type="number" [(ngModel)]="form.contextWindow" placeholder="128" />
                           </div>
-                        </div>
-                        <div class="form-row">
                           <div class="field-sm">
                             <label>Temperature</label>
                             <input type="number" [(ngModel)]="form.temperature" placeholder="padrão do modelo" step="0.01" min="0" max="2" />
@@ -83,6 +195,8 @@ import { ModelDef } from '../../models/types';
                             <label>Top P</label>
                             <input type="number" [(ngModel)]="form.topP" placeholder="padrão do modelo" step="0.01" min="0" max="1" />
                           </div>
+                        </div>
+                        <div class="form-row">
                           <div class="field-sm">
                             <label>Max Tokens</label>
                             <input type="number" [(ngModel)]="form.maxTokens" placeholder="padrão do modelo" />
@@ -94,18 +208,19 @@ import { ModelDef } from '../../models/types';
                         </div>
                       </div>
                     } @else {
-                      <div class="model-row">
-                        <div class="model-row-info">
-                          <span class="model-row-name">{{ m.friendlyName }}</span>
-                          <span class="model-row-id mono">{{ m.id }}</span>
-                          <div class="model-row-params">
+                      <div class="item-row">
+                        <div class="item-row-info">
+                          <span class="item-row-name">{{ m.friendlyName }}</span>
+                          <span class="item-row-id mono">{{ m.id }}</span>
+                          <div class="item-row-params">
                             @if (m.contextWindow) { <span class="param-chip">{{ m.contextWindow }}k</span> }
                             @if (m.temperature !== null) { <span class="param-chip">t={{ m.temperature }}</span> }
                             @if (m.topP !== null) { <span class="param-chip">p={{ m.topP }}</span> }
                             @if (m.maxTokens !== null) { <span class="param-chip">max={{ m.maxTokens }}</span> }
+                            @if (m.providerId) { <span class="param-chip provider-chip">{{ chat.friendlyProviderName(m.providerId) }}</span> }
                           </div>
                         </div>
-                        <div class="model-row-actions">
+                        <div class="item-row-actions">
                           <button class="btn-icon" (click)="startEdit(m)" title="Editar">
                             <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                               <path d="M8.5 1.5L11.5 4.5L5 11H2V8L8.5 1.5Z"/>
@@ -127,10 +242,18 @@ import { ModelDef } from '../../models/types';
                 <p class="empty-hint">Nenhum modelo cadastrado ainda.</p>
               }
 
-              <!-- Formulário de novo modelo -->
               @if (addingNew()) {
-                <div class="model-form">
+                <div class="item-form">
                   <div class="form-row">
+                    <div class="field-sm">
+                      <label>Provider *</label>
+                      <select [(ngModel)]="form.providerId">
+                        <option value="" disabled>Selecione...</option>
+                        @for (p of chat.providers(); track p.id) {
+                          <option [value]="p.id">{{ p.name }}</option>
+                        }
+                      </select>
+                    </div>
                     <div class="field-sm">
                       <label>ID (API) *</label>
                       <input type="text" [(ngModel)]="form.id" placeholder="gpt-4o" spellcheck="false" />
@@ -139,12 +262,12 @@ import { ModelDef } from '../../models/types';
                       <label>Nome amigável *</label>
                       <input type="text" [(ngModel)]="form.friendlyName" placeholder="GPT-4o" spellcheck="false" />
                     </div>
+                  </div>
+                  <div class="form-row">
                     <div class="field-sm">
                       <label>Contexto (k tokens)</label>
                       <input type="number" [(ngModel)]="form.contextWindow" placeholder="128" />
                     </div>
-                  </div>
-                  <div class="form-row">
                     <div class="field-sm">
                       <label>Temperature</label>
                       <input type="number" [(ngModel)]="form.temperature" placeholder="padrão do modelo" step="0.01" min="0" max="2" />
@@ -153,6 +276,8 @@ import { ModelDef } from '../../models/types';
                       <label>Top P</label>
                       <input type="number" [(ngModel)]="form.topP" placeholder="padrão do modelo" step="0.01" min="0" max="1" />
                     </div>
+                  </div>
+                  <div class="form-row">
                     <div class="field-sm">
                       <label>Max Tokens</label>
                       <input type="number" [(ngModel)]="form.maxTokens" placeholder="padrão do modelo" />
@@ -164,7 +289,7 @@ import { ModelDef } from '../../models/types';
                   </div>
                 </div>
               } @else {
-                <button class="btn-add-model" (click)="startAdd()">
+                <button class="btn-add" (click)="startAdd()">
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                     <line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/>
                   </svg>
@@ -174,82 +299,55 @@ import { ModelDef } from '../../models/types';
             </section>
           }
 
+          <!-- Geral -->
+          @if (activeTab() === 'general') {
+            <section class="section">
+              <h2 class="section-title mono">Geral</h2>
+              <p class="section-desc">Configurações gerais do aplicativo.</p>
+
+              <div class="field">
+                <label>Modelo padrão (fallback)</label>
+                <input type="text" [(ngModel)]="defaultModelValue" placeholder="gpt-4o" spellcheck="false" />
+                <span class="hint">Usado quando a conversa não tem modelo selecionado</span>
+              </div>
+
+              <div class="form-actions">
+                @if (savedGeneral) { <span class="saved-msg mono">✓ Salvo</span> }
+                <button class="btn-sm btn-primary" (click)="saveGeneral()" [disabled]="savingGeneral">
+                  {{ savingGeneral ? 'Salvando...' : 'Salvar' }}
+                </button>
+              </div>
+            </section>
+          }
+
         </div>
-
-        @if (activeTab() === 'provider') {
-          <div class="panel-footer">
-            @if (saved) { <span class="saved-msg mono">✓ Salvo</span> }
-            <button class="btn-cancel" (click)="close()">Cancelar</button>
-            <button class="btn-save" (click)="save()" [disabled]="saving">{{ saving ? 'Salvando...' : 'Salvar' }}</button>
-          </div>
-        }
-
       </div>
     </div>
   `,
   styles: [`
-    .overlay {
+    .settings-screen {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.6);
       display: flex;
-      align-items: center;
-      justify-content: center;
+      flex-direction: column;
+      background: var(--bg-primary);
       z-index: 100;
     }
 
-    .panel {
-      width: 580px;
-      max-height: 80vh;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-default);
-      border-radius: var(--radius-lg);
-      display: flex;
-      flex-direction: column;
-      box-shadow: 0 24px 48px rgba(0,0,0,0.5);
-    }
-
-    .panel-header {
-      padding: 14px 20px;
+    .settings-header {
+      height: 48px;
       border-bottom: 1px solid var(--border-subtle);
       display: flex;
       align-items: center;
-      gap: 12px;
+      padding: 0 20px;
+      flex-shrink: 0;
     }
 
-    .panel-title {
+    .settings-title {
       font-weight: 700;
       font-size: 14px;
       letter-spacing: -0.01em;
-      margin-right: 4px;
-    }
-
-    .panel-tabs {
-      display: flex;
-      gap: 2px;
       flex: 1;
-    }
-
-    .tab-btn {
-      padding: 4px 12px;
-      border: none;
-      border-radius: var(--radius-sm);
-      background: transparent;
-      color: var(--text-tertiary);
-      font-family: var(--font-sans);
-      font-size: 12px;
-      cursor: pointer;
-      transition: all var(--transition-fast);
-    }
-
-    .tab-btn.active {
-      background: var(--bg-active);
-      color: var(--text-primary);
-    }
-
-    .tab-btn:hover:not(.active) {
-      background: var(--bg-hover);
-      color: var(--text-secondary);
     }
 
     .btn-close {
@@ -265,26 +363,68 @@ import { ModelDef } from '../../models/types';
       align-items: center;
       justify-content: center;
       transition: all var(--transition-fast);
-      flex-shrink: 0;
     }
 
     .btn-close:hover { background: var(--bg-hover); color: var(--text-primary); }
 
-    .panel-body {
-      padding: 20px;
-      overflow-y: auto;
+    .settings-body {
       flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    .settings-sidebar {
+      width: 200px;
+      border-right: 1px solid var(--border-subtle);
+      padding: 12px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 7px 10px;
+      border: none;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      cursor: pointer;
+      text-align: left;
+      transition: all var(--transition-fast);
+    }
+
+    .nav-item:hover:not(.active) { background: var(--bg-hover); color: var(--text-primary); }
+    .nav-item.active { background: var(--bg-active); color: var(--text-primary); font-weight: 500; }
+
+    .settings-content {
+      flex: 1;
+      padding: 32px 40px;
+      overflow-y: auto;
+      max-width: 680px;
     }
 
     .section-title {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-tertiary);
-      margin-bottom: 14px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+      letter-spacing: -0.02em;
     }
 
+    .section-desc {
+      font-size: 13px;
+      color: var(--text-tertiary);
+      margin-bottom: 20px;
+    }
+
+    /* Fields */
     .field {
       display: flex;
       flex-direction: column;
@@ -299,7 +439,7 @@ import { ModelDef } from '../../models/types';
       color: var(--text-secondary);
     }
 
-    input {
+    input, select {
       padding: 8px 10px;
       border: 1px solid var(--border-default);
       border-radius: var(--radius-sm);
@@ -310,14 +450,24 @@ import { ModelDef } from '../../models/types';
       transition: border-color var(--transition-fast);
     }
 
-    input:focus { outline: none; border-color: var(--accent); }
+    select { font-family: var(--font-sans); cursor: pointer; }
+
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
     input::placeholder { color: var(--text-tertiary); font-family: var(--font-sans); }
     input:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .hint { font-size: 11px; color: var(--text-tertiary); }
 
+    .input-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .input-row input { flex: 1; }
+
     .btn-toggle-key {
-      align-self: flex-start;
+      flex-shrink: 0;
       padding: 2px 8px;
       border: 1px solid var(--border-subtle);
       border-radius: 4px;
@@ -327,19 +477,20 @@ import { ModelDef } from '../../models/types';
       cursor: pointer;
       font-family: var(--font-sans);
       transition: all var(--transition-fast);
+      white-space: nowrap;
     }
 
     .btn-toggle-key:hover { background: var(--bg-hover); color: var(--text-secondary); }
 
-    /* Model list */
-    .model-list {
+    /* Item list */
+    .item-list {
       display: flex;
       flex-direction: column;
       gap: 2px;
       margin-bottom: 12px;
     }
 
-    .model-row {
+    .item-row {
       display: flex;
       align-items: center;
       padding: 8px 10px;
@@ -348,9 +499,9 @@ import { ModelDef } from '../../models/types';
       transition: background var(--transition-fast);
     }
 
-    .model-row:hover { background: var(--bg-hover); }
+    .item-row:hover { background: var(--bg-hover); }
 
-    .model-row-info {
+    .item-row-info {
       flex: 1;
       display: flex;
       align-items: center;
@@ -359,14 +510,14 @@ import { ModelDef } from '../../models/types';
       min-width: 0;
     }
 
-    .model-row-name {
+    .item-row-name {
       font-size: 13px;
       font-weight: 500;
       color: var(--text-primary);
       flex-shrink: 0;
     }
 
-    .model-row-id {
+    .item-row-id {
       font-size: 11px;
       color: var(--text-tertiary);
       overflow: hidden;
@@ -374,7 +525,7 @@ import { ModelDef } from '../../models/types';
       white-space: nowrap;
     }
 
-    .model-row-params {
+    .item-row-params {
       display: flex;
       gap: 4px;
       flex-shrink: 0;
@@ -389,7 +540,13 @@ import { ModelDef } from '../../models/types';
       border-radius: 3px;
     }
 
-    .model-row-actions {
+    .provider-chip {
+      background: var(--bg-active);
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
+    }
+
+    .item-row-actions {
       display: flex;
       gap: 4px;
       flex-shrink: 0;
@@ -412,8 +569,8 @@ import { ModelDef } from '../../models/types';
     .btn-icon:hover { background: var(--bg-hover); color: var(--text-secondary); }
     .btn-icon.danger:hover { background: rgba(239,68,68,0.12); color: var(--error); }
 
-    /* Model form */
-    .model-form {
+    /* Item form */
+    .item-form {
       background: var(--bg-tertiary);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-sm);
@@ -421,7 +578,7 @@ import { ModelDef } from '../../models/types';
       margin-bottom: 10px;
     }
 
-    .model-form.editing { margin-bottom: 2px; }
+    .item-form.editing { margin-bottom: 2px; }
 
     .form-row {
       display: grid;
@@ -438,6 +595,7 @@ import { ModelDef } from '../../models/types';
 
     .form-actions {
       display: flex;
+      align-items: center;
       gap: 6px;
       margin-top: 4px;
     }
@@ -469,7 +627,7 @@ import { ModelDef } from '../../models/types';
 
     .btn-ghost:hover { background: var(--bg-hover); }
 
-    .btn-add-model {
+    .btn-add {
       display: flex;
       align-items: center;
       gap: 6px;
@@ -485,7 +643,7 @@ import { ModelDef } from '../../models/types';
       width: 100%;
     }
 
-    .btn-add-model:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-add:hover { border-color: var(--accent); color: var(--accent); }
 
     .empty-hint {
       font-size: 12px;
@@ -493,99 +651,120 @@ import { ModelDef } from '../../models/types';
       margin-bottom: 12px;
     }
 
-    /* Footer */
-    .panel-footer {
-      padding: 12px 20px;
-      border-top: 1px solid var(--border-subtle);
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 8px;
-    }
-
     .saved-msg { font-size: 12px; color: var(--success); margin-right: auto; }
-
-    .btn-cancel {
-      padding: 7px 14px;
-      border: 1px solid var(--border-default);
-      border-radius: var(--radius-sm);
-      background: transparent;
-      color: var(--text-secondary);
-      font-family: var(--font-sans);
-      font-size: 13px;
-      cursor: pointer;
-      transition: all var(--transition-fast);
-    }
-
-    .btn-cancel:hover { background: var(--bg-hover); color: var(--text-primary); }
-
-    .btn-save {
-      padding: 7px 18px;
-      border: none;
-      border-radius: var(--radius-sm);
-      background: var(--accent);
-      color: var(--text-inverse);
-      font-family: var(--font-sans);
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all var(--transition-fast);
-    }
-
-    .btn-save:hover:not(:disabled) { opacity: 0.85; }
-    .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
   `],
 })
 export class SettingsComponent implements OnInit {
-  activeTab = signal<'provider' | 'models'>('provider');
+  activeTab = signal<'providers' | 'models' | 'general'>('providers');
 
-  // Provider tab
-  endpoint = '';
-  apiKey = '';
-  model = '';
-  showKey = false;
-  saving = false;
-  saved = false;
+  // Provider CRUD
+  providerAddingNew = signal(false);
+  providerEditingId = signal<string | null>(null);
+  providerShowKey = signal<string | null>(null);
+  providerForm: { id: string; name: string; apiUrl: string; apiKey: string } = this.emptyProviderForm();
 
-  // Models tab
+  // Model CRUD
   addingNew = signal(false);
   editingId = signal<string | null>(null);
-  form: { id: string; friendlyName: string; contextWindow: number | null; temperature: number | null; topP: number | null; maxTokens: number | null } = this.emptyForm();
+  form: { id: string; providerId: string; friendlyName: string; contextWindow: number | null; temperature: number | null; topP: number | null; maxTokens: number | null } = this.emptyForm();
 
-  constructor(public chat: ChatService, private wails: WailsService) {}
+  // General
+  defaultModelValue = '';
+  savingGeneral = false;
+  savedGeneral = false;
+
+  constructor(public chat: ChatService, private wails: WailsService) { }
 
   async ngOnInit() {
-    const s = this.chat.settings();
-    this.endpoint = s.llmEndpoint;
-    this.apiKey = s.llmApiKey;
-    this.model = s.llmModel;
+    this.defaultModelValue = this.chat.settings().defaultModel;
   }
 
   close() { this.chat.showSettings.set(false); }
 
-  async save() {
-    this.saving = true;
-    this.saved = false;
+  // ---- General ----
+
+  async saveGeneral() {
+    this.savingGeneral = true;
+    this.savedGeneral = false;
     try {
-      await Promise.all([
-        this.wails.updateSetting('llm_endpoint', this.endpoint.trim()),
-        this.wails.updateSetting('llm_api_key', this.apiKey.trim()),
-        this.wails.updateSetting('llm_model', this.model.trim()),
-      ]);
-      this.chat.settings.update(s => ({
-        ...s,
-        llmEndpoint: this.endpoint.trim(),
-        llmApiKey: this.apiKey.trim(),
-        llmModel: this.model.trim(),
-      }));
-      this.saved = true;
-      setTimeout(() => this.close(), 800);
+      await this.wails.updateSetting('default_model', this.defaultModelValue.trim());
+      this.chat.settings.update(s => ({ ...s, defaultModel: this.defaultModelValue.trim() }));
+      this.savedGeneral = true;
+      setTimeout(() => { this.savedGeneral = false; }, 2000);
     } finally {
-      this.saving = false;
+      this.savingGeneral = false;
     }
   }
 
-  // Models CRUD
+  // ---- Provider CRUD ----
+
+  startProviderAdd() {
+    this.providerEditingId.set(null);
+    this.providerForm = this.emptyProviderForm();
+    this.providerAddingNew.set(true);
+  }
+
+  cancelProviderAdd() { this.providerAddingNew.set(false); }
+
+  async saveProviderNew() {
+    if (!this.providerForm.name.trim() || !this.providerForm.apiUrl.trim()) return;
+    const p = this.toProviderDef();
+    try {
+      const created = await this.wails.createProvider(p);
+      this.chat.providers.update(ps => [...ps, created]);
+      this.providerAddingNew.set(false);
+    } catch (err) {
+      console.error('Erro ao criar provider:', err);
+    }
+  }
+
+  startProviderEdit(p: Provider) {
+    this.providerAddingNew.set(false);
+    this.providerForm = { id: p.id, name: p.name, apiUrl: p.apiUrl, apiKey: p.apiKey };
+    this.providerEditingId.set(p.id);
+  }
+
+  cancelProviderEdit() { this.providerEditingId.set(null); }
+
+  async saveProviderEdit() {
+    if (!this.providerForm.name.trim() || !this.providerForm.apiUrl.trim()) return;
+    const p = this.toProviderDef();
+    try {
+      await this.wails.updateProvider(p);
+      this.chat.providers.update(ps => ps.map(x => x.id === p.id ? p : x));
+      this.providerEditingId.set(null);
+    } catch (err) {
+      console.error('Erro ao atualizar provider:', err);
+    }
+  }
+
+  async deleteProvider(id: string) {
+    try {
+      await this.wails.deleteProvider(id);
+      this.chat.providers.update(ps => ps.filter(p => p.id !== id));
+    } catch (err) {
+      console.error('Erro ao excluir provider:', err);
+    }
+  }
+
+  toggleProviderKey(id: string) {
+    this.providerShowKey.set(this.providerShowKey() === id ? null : id);
+  }
+
+  private emptyProviderForm() {
+    return { id: '', name: '', apiUrl: '', apiKey: '' };
+  }
+
+  private toProviderDef(): Provider {
+    return {
+      id: this.providerForm.id,
+      name: this.providerForm.name.trim(),
+      apiUrl: this.providerForm.apiUrl.trim(),
+      apiKey: this.providerForm.apiKey,
+    };
+  }
+
+  // ---- Model CRUD ----
 
   startAdd() {
     this.editingId.set(null);
@@ -611,6 +790,7 @@ export class SettingsComponent implements OnInit {
     this.addingNew.set(false);
     this.form = {
       id: m.id,
+      providerId: m.providerId,
       friendlyName: m.friendlyName,
       contextWindow: m.contextWindow || null,
       temperature: m.temperature,
@@ -644,12 +824,17 @@ export class SettingsComponent implements OnInit {
   }
 
   private emptyForm() {
-    return { id: '', friendlyName: '', contextWindow: null as number | null, temperature: null as number | null, topP: null as number | null, maxTokens: null as number | null };
+    return {
+      id: '', providerId: '', friendlyName: '',
+      contextWindow: null as number | null, temperature: null as number | null,
+      topP: null as number | null, maxTokens: null as number | null,
+    };
   }
 
   private toModelDef(): ModelDef {
     return {
       id: this.form.id.trim(),
+      providerId: this.form.providerId,
       friendlyName: this.form.friendlyName.trim(),
       contextWindow: this.form.contextWindow ?? 0,
       temperature: this.form.temperature,

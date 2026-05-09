@@ -355,6 +355,22 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 
 			// Executa ferramentas e injeta as respostas na conversa
 			for _, tc := range tcs {
+				// Subagentes herdam o model da conversa pai quando não especificado
+				if tc.Name == "run_subagent" {
+					var tcArgs map[string]any
+					if tc.Arguments != "" {
+						json.Unmarshal([]byte(tc.Arguments), &tcArgs) //nolint:errcheck
+					}
+					if tcArgs == nil {
+						tcArgs = map[string]any{}
+					}
+					if _, hasModel := tcArgs["model"]; !hasModel {
+						tcArgs["model"] = model
+						if b, err := json.Marshal(tcArgs); err == nil {
+							tc.Arguments = string(b)
+						}
+					}
+				}
 				result := a.executeToolCall(tc)
 				toolMsg, err := a.db.AddMessage(conversationID, "tool", result, model, "", tc.ID, "")
 				if err != nil {
@@ -536,6 +552,26 @@ func (a *App) UpdateModel(m db.Model) error {
 
 func (a *App) DeleteModel(id string) error {
 	return a.db.DeleteModel(id)
+}
+
+// ---------------------------------------------------------------------------
+// Providers registry
+// ---------------------------------------------------------------------------
+
+func (a *App) ListProviders() ([]db.Provider, error) {
+	return a.db.ListProviders()
+}
+
+func (a *App) CreateProvider(p db.Provider) (db.Provider, error) {
+	return a.db.CreateProvider(p)
+}
+
+func (a *App) UpdateProvider(p db.Provider) error {
+	return a.db.UpdateProvider(p)
+}
+
+func (a *App) DeleteProvider(id string) error {
+	return a.db.DeleteProvider(id)
 }
 
 func (a *App) SetConversationModel(convID, modelID string) error {

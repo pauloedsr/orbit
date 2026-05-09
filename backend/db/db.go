@@ -121,6 +121,14 @@ func (d *Database) migrate() error {
 			created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`ALTER TABLE conversations ADD COLUMN context_window_usage REAL NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS providers (
+			id         TEXT PRIMARY KEY,
+			name       TEXT NOT NULL,
+			api_url    TEXT NOT NULL,
+			api_key    TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`ALTER TABLE models ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''`,
 	}
 
 	for _, m := range migrations {
@@ -285,6 +293,7 @@ func (d *Database) GetMessages(conversationID string) ([]Message, error) {
 
 type Model struct {
 	ID            string   `json:"id"`
+	ProviderID    string   `json:"providerId"`
 	FriendlyName  string   `json:"friendlyName"`
 	ContextWindow int      `json:"contextWindow"`
 	Temperature   *float64 `json:"temperature"`
@@ -294,7 +303,7 @@ type Model struct {
 
 func (d *Database) ListModels() ([]Model, error) {
 	rows, err := d.conn.Query(
-		`SELECT id, friendly_name, context_window, temperature, top_p, max_tokens FROM models ORDER BY friendly_name ASC`,
+		`SELECT id, provider_id, friendly_name, context_window, temperature, top_p, max_tokens FROM models ORDER BY friendly_name ASC`,
 	)
 	if err != nil {
 		return nil, err
@@ -304,7 +313,7 @@ func (d *Database) ListModels() ([]Model, error) {
 	var out []Model
 	for rows.Next() {
 		var m Model
-		if err := rows.Scan(&m.ID, &m.FriendlyName, &m.ContextWindow, &m.Temperature, &m.TopP, &m.MaxTokens); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProviderID, &m.FriendlyName, &m.ContextWindow, &m.Temperature, &m.TopP, &m.MaxTokens); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -315,29 +324,82 @@ func (d *Database) ListModels() ([]Model, error) {
 func (d *Database) GetModel(id string) (Model, error) {
 	var m Model
 	err := d.conn.QueryRow(
-		`SELECT id, friendly_name, context_window, temperature, top_p, max_tokens FROM models WHERE id = ?`, id,
-	).Scan(&m.ID, &m.FriendlyName, &m.ContextWindow, &m.Temperature, &m.TopP, &m.MaxTokens)
+		`SELECT id, provider_id, friendly_name, context_window, temperature, top_p, max_tokens FROM models WHERE id = ?`, id,
+	).Scan(&m.ID, &m.ProviderID, &m.FriendlyName, &m.ContextWindow, &m.Temperature, &m.TopP, &m.MaxTokens)
 	return m, err
 }
 
 func (d *Database) CreateModel(m Model) (Model, error) {
 	_, err := d.conn.Exec(
-		`INSERT INTO models (id, friendly_name, context_window, temperature, top_p, max_tokens) VALUES (?, ?, ?, ?, ?, ?)`,
-		m.ID, m.FriendlyName, m.ContextWindow, m.Temperature, m.TopP, m.MaxTokens,
+		`INSERT INTO models (id, provider_id, friendly_name, context_window, temperature, top_p, max_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.ProviderID, m.FriendlyName, m.ContextWindow, m.Temperature, m.TopP, m.MaxTokens,
 	)
 	return m, err
 }
 
 func (d *Database) UpdateModel(m Model) error {
 	_, err := d.conn.Exec(
-		`UPDATE models SET friendly_name=?, context_window=?, temperature=?, top_p=?, max_tokens=? WHERE id=?`,
-		m.FriendlyName, m.ContextWindow, m.Temperature, m.TopP, m.MaxTokens, m.ID,
+		`UPDATE models SET provider_id=?, friendly_name=?, context_window=?, temperature=?, top_p=?, max_tokens=? WHERE id=?`,
+		m.ProviderID, m.FriendlyName, m.ContextWindow, m.Temperature, m.TopP, m.MaxTokens, m.ID,
 	)
 	return err
 }
 
 func (d *Database) DeleteModel(id string) error {
 	_, err := d.conn.Exec(`DELETE FROM models WHERE id = ?`, id)
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// Providers CRUD
+// ---------------------------------------------------------------------------
+
+type Provider struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	APIUrl string `json:"apiUrl"`
+	APIKey string `json:"apiKey"`
+}
+
+func (d *Database) ListProviders() ([]Provider, error) {
+	rows, err := d.conn.Query(`SELECT id, name, api_url, api_key FROM providers ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Provider
+	for rows.Next() {
+		var p Provider
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIUrl, &p.APIKey); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (d *Database) CreateProvider(p Provider) (Provider, error) {
+	if p.ID == "" {
+		p.ID = uuid.NewString()
+	}
+	_, err := d.conn.Exec(
+		`INSERT INTO providers (id, name, api_url, api_key) VALUES (?, ?, ?, ?)`,
+		p.ID, p.Name, p.APIUrl, p.APIKey,
+	)
+	return p, err
+}
+
+func (d *Database) UpdateProvider(p Provider) error {
+	_, err := d.conn.Exec(
+		`UPDATE providers SET name=?, api_url=?, api_key=? WHERE id=?`,
+		p.Name, p.APIUrl, p.APIKey, p.ID,
+	)
+	return err
+}
+
+func (d *Database) DeleteProvider(id string) error {
+	_, err := d.conn.Exec(`DELETE FROM providers WHERE id = ?`, id)
 	return err
 }
 

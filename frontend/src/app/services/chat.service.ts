@@ -1,7 +1,7 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { WailsService } from './wails.service';
 import {
-  Conversation, ConversationMode, Message, ModelDef, Settings, ToolInteraction, SubAgentSession, SubAgentIteration,
+  Conversation, ConversationMode, Message, ModelDef, Provider, Settings, ToolInteraction, SubAgentSession, SubAgentIteration,
   ChatThinkingPayload, ChatChunkPayload, ChatMessagePayload, ChatStoppedPayload, ChatContextUsagePayload,
 } from '../models/types';
 
@@ -18,7 +18,8 @@ export class ChatService {
   private _streamingStates = signal<Map<string, { content: string }>>(new Map());
   showSettings = signal(false);
   error = signal<string | null>(null);
-  settings = signal<Settings>({ defaultModel: '', defaultProvider: '', theme: 'dark', llmEndpoint: '', llmApiKey: '', llmModel: '' });
+  providers = signal<Provider[]>([]);
+  settings = signal<Settings>({ defaultModel: '', defaultProvider: '', theme: 'dark' });
   pendingInteraction = signal<ToolInteraction | null>(null);
   deleteConfirmation = signal<{ id: string; title: string } | null>(null);
   renameConversation = signal<{ id: string; currentTitle: string } | null>(null);
@@ -181,6 +182,10 @@ export class ChatService {
       const models = await this.wails.listModels();
       this.models.set(models ?? []);
     } catch { }
+    try {
+      const providers = await this.wails.listProviders();
+      this.providers.set(providers ?? []);
+    } catch { }
   }
 
   async loadConversations() {
@@ -246,15 +251,21 @@ export class ChatService {
   }
 
   async createConversation(title?: string) {
-    const model = this.settings().llmModel || this.settings().defaultModel || 'gpt-4o';
+    const modelId = this.settings().defaultModel || 'gpt-4o';
+    const modelDef = this.models().find(m => m.id === modelId);
+    const providerId = modelDef?.providerId ?? this.settings().defaultProvider ?? '';
     const conv = await this.wails.createConversation(
       title || 'Nova conversa',
-      model,
-      'openai-compat'
+      modelId,
+      providerId || 'openai-compat',
     );
     this.conversations.update(c => [conv, ...c]);
     await this.openTab(conv.id);
     return conv;
+  }
+
+  friendlyProviderName(providerId: string): string {
+    return this.providers().find(p => p.id === providerId)?.name ?? providerId;
   }
 
   async sendMessage(content: string) {
