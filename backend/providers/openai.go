@@ -93,6 +93,9 @@ type oaiChunk struct {
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *struct {
+		TotalTokens int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
@@ -186,6 +189,7 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 		return err
 	}
 
+	var totalTokens int
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		select {
@@ -211,6 +215,9 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 			err := fmt.Errorf("provider: %s", chunk.Error.Message)
 			out <- Event{Type: EventError, Error: err}
 			return err
+		}
+		if chunk.Usage != nil && chunk.Usage.TotalTokens > 0 {
+			totalTokens = chunk.Usage.TotalTokens
 		}
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta
@@ -245,6 +252,10 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 		}
 	}
 
-	out <- Event{Type: EventDone}
+	var meta map[string]any
+	if totalTokens > 0 {
+		meta = map[string]any{"usage.total_tokens": totalTokens}
+	}
+	out <- Event{Type: EventDone, Metadata: meta}
 	return scanner.Err()
 }

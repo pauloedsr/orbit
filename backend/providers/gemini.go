@@ -110,6 +110,9 @@ type geminiChunk struct {
 		} `json:"content"`
 		FinishReason string `json:"finishReason,omitempty"`
 	} `json:"candidates"`
+	UsageMetadata *struct {
+		TotalTokenCount int `json:"totalTokenCount"`
+	} `json:"usageMetadata,omitempty"`
 	Error *struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
@@ -170,6 +173,7 @@ func (p *GeminiProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 	// O Gemini retorna a signature NA MESMA part que o functionCall.
 	var toolSignatures []string
 	toolCallIndex := 0
+	var totalTokens int
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -202,6 +206,10 @@ func (p *GeminiProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 			err := fmt.Errorf("provider HTTP %d: %s", chunk.Error.Code, chunk.Error.Message)
 			out <- Event{Type: EventError, Error: err}
 			return err
+		}
+
+		if chunk.UsageMetadata != nil && chunk.UsageMetadata.TotalTokenCount > 0 {
+			totalTokens = chunk.UsageMetadata.TotalTokenCount
 		}
 
 		for _, cand := range chunk.Candidates {
@@ -248,11 +256,17 @@ func (p *GeminiProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 		}
 	}
 
-	fmt.Printf("[Orbit/Gemini] stream completo — %d tool call(s), signatures: %v\n",
-		toolCallIndex, toolSignatures)
+	fmt.Printf("[Orbit/Gemini] stream completo — %d tool call(s), signatures: %v, tokens: %d\n",
+		toolCallIndex, toolSignatures, totalTokens)
 	var meta map[string]any
-	if len(toolSignatures) > 0 {
-		meta = map[string]any{"gemini.tool_signatures": toolSignatures}
+	if len(toolSignatures) > 0 || totalTokens > 0 {
+		meta = map[string]any{}
+		if len(toolSignatures) > 0 {
+			meta["gemini.tool_signatures"] = toolSignatures
+		}
+		if totalTokens > 0 {
+			meta["usage.total_tokens"] = totalTokens
+		}
 	}
 	out <- Event{Type: EventDone, Metadata: meta}
 	return scanner.Err()

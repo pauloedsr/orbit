@@ -22,6 +22,7 @@ export interface Conversation {
   pinned: boolean;
   mode: ConversationMode;
   planPhase: PlanPhase;
+  contextWindowUsage: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -82,7 +83,8 @@ export interface SubAgentSession {
 }
 
 // Payloads dos eventos de streaming emitidos pelo backend
-export interface ChatThinkingPayload { conversationId: string }
-export interface ChatChunkPayload    { conversationId: string; text: string }
-export interface ChatMessagePayload  { conversationId: string; message: Message }
-export interface ChatStoppedPayload  { conversationId: string; message: Message | null }
+export interface ChatThinkingPayload      { conversationId: string }
+export interface ChatChunkPayload         { conversationId: string; text: string }
+export interface ChatMessagePayload       { conversationId: string; message: Message }
+export interface ChatStoppedPayload       { conversationId: string; message: Message | null }
+export interface ChatContextUsagePayload  { conversationId: string; percentage: number; totalTokens: number; contextWindow: number }

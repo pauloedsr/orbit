@@ -2,7 +2,7 @@ import { Injectable, signal, computed } from '@angular/core';
 import { WailsService } from './wails.service';
 import {
   Conversation, ConversationMode, Message, ModelDef, Settings, ToolInteraction, SubAgentSession, SubAgentIteration,
-  ChatThinkingPayload, ChatChunkPayload, ChatMessagePayload, ChatStoppedPayload,
+  ChatThinkingPayload, ChatChunkPayload, ChatMessagePayload, ChatStoppedPayload, ChatContextUsagePayload,
 } from '../models/types';
 
 @Injectable({ providedIn: 'root' })
@@ -92,6 +92,12 @@ export class ChatService {
         this.pushToConv(msg.conversationId, msg);
       }
       this._streamingStates.update(m => { const n = new Map(m); n.delete(data.conversationId); return n; });
+    });
+
+    this.wails.onEvent('chat:context_usage', (data: ChatContextUsagePayload) => {
+      this.conversations.update(cs =>
+        cs.map(c => c.id === data.conversationId ? { ...c, contextWindowUsage: data.percentage } : c)
+      );
     });
 
     this.wails.onEvent('tool:ask', (data: any) => {

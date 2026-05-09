@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, AfterViewChecked, signal, HostListener } from '@angular/core';
+import { Component, ElementRef, ViewChild, AfterViewChecked, signal, computed, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MarkdownComponent } from 'ngx-markdown';
@@ -42,6 +42,20 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
                 </div>
               }
             </div>
+            @if (conv.contextWindowUsage > 0) {
+              <div class="ctx-arc" [title]="ctxTitle()">
+                <svg width="20" height="20" viewBox="0 0 20 20">
+                  <circle cx="10" cy="10" r="8" fill="none" stroke="var(--bg-tertiary)" stroke-width="2.5"/>
+                  <circle cx="10" cy="10" r="8" fill="none"
+                    [attr.stroke]="ctxColor()"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-dasharray="50.27"
+                    [attr.stroke-dashoffset]="ctxOffset()"
+                    transform="rotate(-90 10 10)"/>
+                </svg>
+              </div>
+            }
           </div>
         } @else {
           <div class="header-info wails-no-drag">
@@ -585,6 +599,19 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
       background: var(--error);
       color: #fff;
     }
+
+    .ctx-arc {
+      display: flex;
+      align-items: center;
+      cursor: default;
+      opacity: 0.8;
+      transition: opacity 0.2s;
+      flex-shrink: 0;
+    }
+    .ctx-arc:hover { opacity: 1; }
+    .ctx-arc circle:last-child {
+      transition: stroke-dashoffset 0.6s ease, stroke 0.4s ease;
+    }
   `]
 })
 export class ChatComponent implements AfterViewChecked {
@@ -594,6 +621,25 @@ export class ChatComponent implements AfterViewChecked {
   inputText = '';
   isConnected = signal(false);
   showModelPicker = signal(false);
+
+  private readonly CTX_CIRCUMFERENCE = 2 * Math.PI * 8; // ~50.27
+
+  ctxOffset = computed(() => {
+    const pct = this.chat.activeConversation()?.contextWindowUsage ?? 0;
+    return this.CTX_CIRCUMFERENCE * (1 - pct / 100);
+  });
+
+  ctxColor = computed(() => {
+    const pct = this.chat.activeConversation()?.contextWindowUsage ?? 0;
+    if (pct >= 90) return 'var(--error)';
+    if (pct >= 70) return 'var(--warning)';
+    return 'var(--success)';
+  });
+
+  ctxTitle = computed(() => {
+    const pct = this.chat.activeConversation()?.contextWindowUsage ?? 0;
+    return `${Math.round(pct)}% da janela de contexto usada`;
+  });
 
   private shouldScroll = false;
 

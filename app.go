@@ -74,15 +74,16 @@ func (a *App) shutdown(ctx context.Context) {
 // ---------------------------------------------------------------------------
 
 type ConversationDTO struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Model     string `json:"model"`
-	Provider  string `json:"provider"`
-	Pinned    bool   `json:"pinned"`
-	Mode      string `json:"mode"`
-	PlanPhase string `json:"planPhase"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	ID                 string  `json:"id"`
+	Title              string  `json:"title"`
+	Model              string  `json:"model"`
+	Provider           string  `json:"provider"`
+	Pinned             bool    `json:"pinned"`
+	Mode               string  `json:"mode"`
+	PlanPhase          string  `json:"planPhase"`
+	ContextWindowUsage float64 `json:"contextWindowUsage"`
+	CreatedAt          string  `json:"createdAt"`
+	UpdatedAt          string  `json:"updatedAt"`
 }
 
 func (a *App) CreateConversation(title, model, provider string) (ConversationDTO, error) {
@@ -378,6 +379,26 @@ func (a *App) SendMessage(conversationID, content string) (MessageDTO, error) {
 			"conversationId": conversationID,
 			"message":        toMsgDTO(finalMsg),
 		})
+
+		// Atualiza o percentual de uso da janela de contexto na conversa
+		if totalTokensRaw, ok := pendingMetadata["usage.total_tokens"]; ok {
+			if totalTokens, ok := totalTokensRaw.(int); ok && totalTokens > 0 {
+				if modelDef, err := a.db.GetModel(model); err == nil && modelDef.ContextWindow > 0 {
+					pct := float64(totalTokens) / float64(modelDef.ContextWindow) * 100
+					if pct > 100 {
+						pct = 100
+					}
+					_ = a.db.UpdateConversationContextWindowUsage(conversationID, pct)
+					runtime.EventsEmit(a.ctx, "chat:context_usage", map[string]any{
+						"conversationId": conversationID,
+						"percentage":     pct,
+						"totalTokens":    totalTokens,
+						"contextWindow":  modelDef.ContextWindow,
+					})
+				}
+			}
+		}
+
 		break
 	}
 
@@ -547,15 +568,16 @@ func toConvDTO(c db.Conversation) ConversationDTO {
 		planPhase = "planning"
 	}
 	return ConversationDTO{
-		ID:        c.ID,
-		Title:     c.Title,
-		Model:     c.Model,
-		Provider:  c.Provider,
-		Pinned:    c.Pinned,
-		Mode:      mode,
-		PlanPhase: planPhase,
-		CreatedAt: c.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
+		ID:                 c.ID,
+		Title:              c.Title,
+		Model:              c.Model,
+		Provider:           c.Provider,
+		Pinned:             c.Pinned,
+		Mode:               mode,
+		PlanPhase:          planPhase,
+		ContextWindowUsage: c.ContextWindowUsage,
+		CreatedAt:          c.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:          c.UpdatedAt.Format(time.RFC3339),
 	}
 }
 
