@@ -105,13 +105,26 @@ func EditFile(args map[string]any) string {
 	return fmt.Sprintf("Arquivo %s editado com sucesso.", path)
 }
 
-// SearchFiles busca arquivos usando um padrão Glob com suporte a **.
-func SearchFiles(args map[string]any) string {
-	pattern, _ := args["pattern"].(string)
+// SearchFilesByGlob contém a lógica principal para buscar arquivos com glob.
+// Retorna um slice de strings, ideal para ser usado por outras funções.
+func SearchFilesByGlob(pattern string) ([]string, error) {
 	files, err := expandGlob(pattern)
 	if err != nil {
-		return fmt.Sprintf("Erro ao expandir glob %s: %v", pattern, err)
+		return nil, fmt.Errorf("erro ao expandir glob %s: %v", pattern, err)
 	}
+	return files, nil
+}
+
+// SearchFiles busca arquivos usando um padrão Glob com suporte a **.
+// Esta função permanece para ser usada pelo sistema de ferramentas do agente.
+func SearchFiles(args map[string]any) string {
+	pattern, _ := args["pattern"].(string)
+
+	files, err := SearchFilesByGlob(pattern) // Usar a nova função
+	if err != nil {
+		return err.Error() // Retornar o erro formatado
+	}
+
 	if len(files) == 0 {
 		return fmt.Sprintf("Nenhum arquivo encontrado com o padrão: %s", pattern)
 	}
@@ -487,24 +500,45 @@ func walkTree(sb *strings.Builder, path, prefix string) error {
 }
 
 // expandGlob expande padrões glob com suporte a **.
+// Diretórios como .git e node_modules são ignorados para maior performance.
 func expandGlob(pattern string) ([]string, error) {
+	// Lista de diretórios a serem ignorados.
+	ignoredDirs := map[string]struct{}{
+		".git":         {},
+		"node_modules": {},
+		"vendor":       {}, // Comum em projetos Go
+		"dist":         {}, // Comum em projetos web
+		"build":        {}, // Comum em vários projetos
+	}
+
 	if !strings.Contains(pattern, "**") {
+		// Para globs simples, a função padrão é suficiente e mais rápida.
 		return filepath.Glob(pattern)
 	}
 
 	parts := strings.SplitN(pattern, "**", 2)
 	baseDir := filepath.Clean(strings.TrimRight(parts[0], "/\\"))
-	if baseDir == "" || baseDir == "." {
+	if baseDir == "" {
 		baseDir = "."
 	}
 	suffix := strings.TrimLeft(parts[1], "/\\")
 
 	var matches []string
 	err := filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
+		if err != nil {
+			return nil // Ignora erros de permissão etc. para continuar a busca
 		}
-		if suffix == "" {
+
+		// Se for um diretório, verifica se deve ser ignorado.
+		if d.IsDir() {
+			if _, ignored := ignoredDirs[d.Name()]; ignored {
+				return filepath.SkipDir // Pula o diretório e todo o seu conteúdo
+			}
+			return nil // Continua a busca dentro do diretório
+		}
+
+		// Se for um arquivo, verifica se corresponde ao padrão.
+		if suffix == "" { // Caso de "src/**"
 			matches = append(matches, path)
 			return nil
 		}

@@ -10,6 +10,7 @@ export interface ModelDef {
   temperature:   number | null;
   topP:          number | null;
   maxTokens:     number | null;
+  thinkingField: string;
 }
 
 export interface Provider {
@@ -31,6 +32,7 @@ export interface Conversation {
   mode: ConversationMode;
   planPhase: PlanPhase;
   contextWindowUsage: number;
+  thinkingEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,6 +45,7 @@ export interface Message {
   model: string;
   toolCalls?: string;
   toolCallId?: string;
+  metadata?: string;
   createdAt: string;
 }
 
@@ -90,6 +93,7 @@ export interface SubAgentSession {
 // Payloads dos eventos de streaming emitidos pelo backend
 export interface ChatThinkingPayload      { conversationId: string }
 export interface ChatChunkPayload         { conversationId: string; text: string }
+export interface ChatThinkingChunkPayload { conversationId: string; text: string }
 export interface ChatMessagePayload       { conversationId: string; message: Message }
 export interface ChatStoppedPayload       { conversationId: string; message: Message | null }
 export interface ChatContextUsagePayload  { conversationId: string; percentage: number; totalTokens: number; contextWindow: number }

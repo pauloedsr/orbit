@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, AfterViewChecked, signal, computed, HostListener } from '@angular/core';
+import { Component, ElementRef, ViewChild, AfterViewChecked, signal, computed, HostListener, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MarkdownComponent } from 'ngx-markdown';
@@ -10,11 +10,13 @@ import { TabService } from '../../services/tab.service';
 import { SettingsService } from '../../services/settings.service';
 import { UiStateService } from '../../services/ui-state.service';
 import { TabBarComponent } from '../tab-bar/tab-bar.component';
+import { MentionAutocompleteComponent } from '../mention-autocomplete/mention-autocomplete.component';
+import { debounceTime, Subject } from 'rxjs';
 
 @Component({
   selector: 'app-chat',
   standalone: true,
-  imports: [CommonModule, FormsModule, MarkdownComponent, TabBarComponent],
+  imports: [CommonModule, FormsModule, MarkdownComponent, TabBarComponent, MentionAutocompleteComponent],
   template: `
     <div class="chat-container">
       <!-- Header -->
@@ -108,10 +110,15 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
                 {{ msg.role === 'user' ? '›' : '◉' }}
                 {{ msg.role }}
               </div>
+              @if (msg.role === 'assistant' && messageThinking(msg); as think) {
+                <details class="thinking-block">
+                  <summary>💭 Raciocínio</summary>
+                  <div class="thinking-content">{{ think }}</div>
+                </details>
+              }
               <markdown class="message-content" [data]="msg.content" />
             </div>
           }
-
           @if (messageService.error()) {
             <div class="message-error">
               <span class="mono">⚠</span> {{ messageService.error() }}
@@ -121,9 +128,15 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
           @if (streamService.isStreamingFor(tabService.activeConversationId()!)) {
             <div class="message message-assistant">
               <div class="message-role mono">◉ assistant</div>
+              @if (streamService.streamingThinkingFor(tabService.activeConversationId()!); as think) {
+                <details class="thinking-block" open>
+                  <summary>💭 Raciocínio</summary>
+                  <div class="thinking-content">{{ think }}</div>
+                </details>
+              }
               @if (streamService.streamingContentFor(tabService.activeConversationId()!)) {
                 <markdown class="message-content" [data]="streamService.streamingContentFor(tabService.activeConversationId()!)" />
-              } @else {
+              } @else if (!streamService.streamingThinkingFor(tabService.activeConversationId()!)) {
                 <div class="message-content"><span class="cursor-blink">▊</span></div>
               }
             </div>
@@ -134,13 +147,18 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
       <!-- Input -->
       @if (tabService.activeConversationId()) {
         <div class="input-area">
-          <div class="input-row">
+          <div class="input-wrapper">
+             <app-mention-autocomplete
+              [items]="mentionItems"
+              (itemSelected)="onMentionItemSelected($event)"
+            />
             <textarea
               #inputField
               class="chat-input"
               [(ngModel)]="inputText"
               (keydown)="onKeydown($event)"
-              placeholder="Mensagem... (Enter para enviar, Shift+Enter para nova linha)"
+              (input)="onInput()"
+              placeholder="Mensagem... (use @ para mencionar arquivos)"
               rows="1"
               [disabled]="streamService.isStreamingFor(tabService.activeConversationId()!)"
             ></textarea>
@@ -161,6 +179,14 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
               (click)="cycleMode()"
               title="Shift+Tab para alternar modo"
             >{{ convService.currentMode().toUpperCase() }}</button>
+            @if (currentModelHasThinking()) {
+              <button
+                class="think-toggle"
+                [class.active]="convService.activeConversation()?.thinkingEnabled"
+                (click)="toggleThinking()"
+                [title]="convService.activeConversation()?.thinkingEnabled ? 'Thinking ligado' : 'Thinking desligado'"
+              >💭 {{ convService.activeConversation()?.thinkingEnabled ? 'on' : 'off' }}</button>
+            }
             @if (convService.currentMode() === 'plan' && convService.activeConversation()?.planPhase === 'planning' && messageService.messages().length > 0) {
               <button class="btn-implement" (click)="startPlanImplementation()">
                 ▶ Iniciar Implementação
@@ -232,11 +258,6 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
 
     .header-model {
       font-size: 11px;
-      color: var(--text-tertiary);
-    }
-
-    .chevron {
-      color: var(--text-tertiary);
       opacity: 0.6;
     }
 
@@ -324,10 +345,6 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
 
     .status-dot.connected {
       background: var(--success);
-    }
-
-    .status-text {
-      font-size: 10px;
     }
 
     .btn-toggle-sidebar {
@@ -460,12 +477,14 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
       max-width: 840px;
       margin: 0 auto;
       width: 100%;
+      position: relative;
     }
 
-    .input-row {
-      display: flex;
-      align-items: flex-end;
-      gap: 8px;
+    .input-wrapper {
+        position: relative;
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
     }
 
     .input-meta {
@@ -617,15 +636,69 @@ import { TabBarComponent } from '../tab-bar/tab-bar.component';
     .ctx-arc circle:last-child {
       transition: stroke-dashoffset 0.6s ease, stroke 0.4s ease;
     }
+
+    .thinking-block {
+      margin: 4px 0 8px;
+      padding: 6px 10px;
+      background: var(--bg-tertiary);
+      border-left: 2px solid var(--border-default);
+      border-radius: 3px;
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+    .thinking-block summary {
+      cursor: pointer;
+      user-select: none;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      padding: 2px 0;
+    }
+    .thinking-block .thinking-content {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed var(--border-subtle);
+      white-space: pre-wrap;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .think-toggle {
+      padding: 3px 8px;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-tertiary);
+      font-family: var(--font-sans);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .think-toggle:hover { background: var(--bg-hover); color: var(--text-secondary); }
+    .think-toggle.active {
+      background: var(--bg-active);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
   `]
 })
 export class ChatComponent implements AfterViewChecked {
   @ViewChild('messagesArea') private messagesArea!: ElementRef;
   @ViewChild('inputField') private inputField!: ElementRef;
+  @ViewChild(MentionAutocompleteComponent) private mentionAutocomplete!: MentionAutocompleteComponent;
 
   inputText = '';
   isConnected = signal(false);
   showModelPicker = signal(false);
+
+  // Lógica de Menção
+  isMentioning = signal(false);
+  mentionQuery = signal('');
+  mentionItems = signal<string[]>([]);
+  private mentionQuery$ = new Subject<string | null>();
+  private mentionTriggerIndex = -1;
+
 
   private readonly CTX_CIRCUMFERENCE = 2 * Math.PI * 8;
 
@@ -658,6 +731,29 @@ export class ChatComponent implements AfterViewChecked {
     private wails: WailsService,
   ) {
     this.checkConnection();
+
+    this.mentionQuery$.pipe(debounceTime(200)).subscribe(async query => {
+        if (query === null) {
+            this.mentionItems.set([]);
+            return;
+        }
+        try {
+            const files = await (window as any).go.main.App.SearchFiles({ pattern: query });
+            this.mentionItems.set(files || []);
+        } catch (error) {
+            console.error('Error searching files for mention:', error);
+            this.mentionItems.set([]);
+        }
+    });
+
+    effect(() => {
+      this.messageService.messages();
+      const activeId = this.tabService.activeConversationId();
+      if (activeId) {
+        this.streamService.streamingContentFor(activeId);
+      }
+      this.shouldScroll = true;
+    });
   }
 
   @HostListener('document:keydown', ['$event'])
@@ -688,6 +784,10 @@ export class ChatComponent implements AfterViewChecked {
   }
 
   async send() {
+    // Esconde o autocompletar ao enviar
+    this.isMentioning.set(false);
+    this.mentionItems.set([]);
+
     const convId = this.tabService.activeConversationId();
     if (!this.inputText.trim() || !convId || this.streamService.isStreamingFor(convId)) return;
 
@@ -696,6 +796,9 @@ export class ChatComponent implements AfterViewChecked {
     this.shouldScroll = true;
 
     await this.streamService.sendMessage(content);
+    if (this.tabService.activeConversationId()) {
+      await this.messageService.loadMessages(this.tabService.activeConversationId()!);
+    }
     this.shouldScroll = true;
 
     setTimeout(() => this.inputField?.nativeElement?.focus(), 50);
@@ -727,6 +830,34 @@ export class ChatComponent implements AfterViewChecked {
     await this.convService.setConversationModel(convId, modelId);
   }
 
+  currentModelHasThinking(): boolean {
+    const conv = this.convService.activeConversation();
+    if (!conv) return false;
+    const m = this.settings.models().find(x => x.id === conv.model);
+    return !!(m && m.thinkingField && m.thinkingField.trim().length > 0);
+  }
+
+  async toggleThinking() {
+    const conv = this.convService.activeConversation();
+    if (!conv) return;
+    const next = !conv.thinkingEnabled;
+    await (window as any).go.main.App.SetConversationThinkingEnabled(conv.id, next);
+    this.convService.conversations.update(cs =>
+      cs.map(c => c.id === conv.id ? { ...c, thinkingEnabled: next } : c)
+    );
+  }
+
+  messageThinking(msg: any): string | null {
+    if (!msg?.metadata) return null;
+    try {
+      const parsed = JSON.parse(msg.metadata);
+      const v = parsed?.['reasoning.content'];
+      return typeof v === 'string' && v.length > 0 ? v : null;
+    } catch {
+      return null;
+    }
+  }
+
   @HostListener('document:click')
   onDocumentClick() {
     this.showModelPicker.set(false);
@@ -738,10 +869,62 @@ export class ChatComponent implements AfterViewChecked {
   }
 
   onKeydown(event: KeyboardEvent) {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (this.isMentioning() && this.mentionItems().length > 0) {
+      // Passa o evento para o componente de autocompletar
+      this.mentionAutocomplete.handleKeyDown(event);
+      if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key)) {
+        event.preventDefault(); // Impede o comportamento padrão (ex: enviar formulário)
+      }
+    } else if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       this.send();
     }
+  }
+
+  onInput(): void {
+    const text = this.inputText;
+    const cursorPosition = this.inputField.nativeElement.selectionStart;
+
+    const atIndex = text.lastIndexOf('@', cursorPosition - 1);
+
+    if (atIndex !== -1) {
+        const charBefore = text[atIndex - 1];
+        if (charBefore && !/\s/.test(charBefore)) {
+            // É um email ou algo do tipo, não um gatilho de menção
+            this.isMentioning.set(false);
+            this.mentionQuery$.next(null);
+            return;
+        }
+
+        const query = text.substring(atIndex + 1, cursorPosition);
+        this.isMentioning.set(true);
+        this.mentionTriggerIndex = atIndex;
+        this.mentionQuery.set(query);
+        this.mentionQuery$.next(query ? `**/*${query}*` : '**/*'); // Usa glob para buscar
+    } else {
+        this.isMentioning.set(false);
+        this.mentionQuery$.next(null);
+    }
+  }
+
+  onMentionItemSelected(selectedItem: string): void {
+    const text = this.inputText;
+    const start = this.mentionTriggerIndex;
+    const end = this.mentionTriggerIndex + this.mentionQuery().length + 1;
+
+    // Adiciona um espaço após o item selecionado, se não for o final da string
+    const suffix = text.substring(end).length > 0 ? text.substring(end) : ' ';
+    this.inputText = text.substring(0, start) + `@'${selectedItem}'` + suffix;
+
+    this.isMentioning.set(false);
+    this.mentionItems.set([]);
+
+    // Reposiciona o cursor
+    setTimeout(() => {
+        const newCursorPos = start + selectedItem.length + 3; // +2 for quotes, +1 for space
+        this.inputField.nativeElement.focus();
+        this.inputField.nativeElement.setSelectionRange(newCursorPos, newCursorPos);
+    }, 0);
   }
 
   private scrollToBottom() {

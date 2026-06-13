@@ -7,6 +7,7 @@ type EventType int
 
 const (
 	EventTextDelta EventType = iota
+	EventThinkingDelta
 	EventToolCallStart
 	EventToolCallDelta
 	EventToolCallEnd
@@ -91,6 +92,10 @@ type Request struct {
 	Temperature float64   `json:"temperature,omitempty"`
 	TopP        float64   `json:"top_p,omitempty"`
 	Stream      bool      `json:"stream"`
+	// ThinkingField: nome do campo JSON dentro de delta que carrega o raciocínio
+	// do modelo (ex.: "reasoning_content" no OpenAI-compat do Ollama, "thinking"
+	// no formato nativo). Vazio = não tentar extrair thinking.
+	ThinkingField string `json:"-"`
 }
 
 // Provider é a interface que cada adapter implementa.

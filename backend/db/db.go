@@ -25,6 +25,7 @@ type Conversation struct {
 	Mode               string
 	PlanPhase          string
 	ContextWindowUsage float64
+	ThinkingEnabled    bool
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -129,6 +130,8 @@ func (d *Database) migrate() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`ALTER TABLE models ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE models ADD COLUMN thinking_field TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE conversations ADD COLUMN thinking_enabled INTEGER NOT NULL DEFAULT 0`,
 	}
 
 	for _, m := range migrations {
@@ -164,7 +167,7 @@ func (d *Database) CreateConversation(title, model, provider string) (Conversati
 }
 
 func (d *Database) ListConversations() ([]Conversation, error) {
-	rows, err := d.conn.Query(`SELECT id, title, model, provider, pinned, mode, plan_phase, context_window_usage, created_at, updated_at FROM conversations ORDER BY pinned DESC, updated_at DESC`)
+	rows, err := d.conn.Query(`SELECT id, title, model, provider, pinned, mode, plan_phase, context_window_usage, thinking_enabled, created_at, updated_at FROM conversations ORDER BY pinned DESC, updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -173,11 +176,12 @@ func (d *Database) ListConversations() ([]Conversation, error) {
 	var out []Conversation
 	for rows.Next() {
 		var c Conversation
-		var pinnedInt int
-		if err := rows.Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &pinnedInt, &c.Mode, &c.PlanPhase, &c.ContextWindowUsage, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var pinnedInt, thinkInt int
+		if err := rows.Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &pinnedInt, &c.Mode, &c.PlanPhase, &c.ContextWindowUsage, &thinkInt, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Pinned = pinnedInt != 0
+		c.ThinkingEnabled = thinkInt != 0
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -185,12 +189,25 @@ func (d *Database) ListConversations() ([]Conversation, error) {
 
 func (d *Database) GetConversation(id string) (Conversation, error) {
 	var c Conversation
-	var pinnedInt int
+	var pinnedInt, thinkInt int
 	err := d.conn.QueryRow(
-		`SELECT id, title, model, provider, pinned, mode, plan_phase, context_window_usage, created_at, updated_at FROM conversations WHERE id = ?`, id,
-	).Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &pinnedInt, &c.Mode, &c.PlanPhase, &c.ContextWindowUsage, &c.CreatedAt, &c.UpdatedAt)
+		`SELECT id, title, model, provider, pinned, mode, plan_phase, context_window_usage, thinking_enabled, created_at, updated_at FROM conversations WHERE id = ?`, id,
+	).Scan(&c.ID, &c.Title, &c.Model, &c.Provider, &pinnedInt, &c.Mode, &c.PlanPhase, &c.ContextWindowUsage, &thinkInt, &c.CreatedAt, &c.UpdatedAt)
 	c.Pinned = pinnedInt != 0
+	c.ThinkingEnabled = thinkInt != 0
 	return c, err
+}
+
+func (d *Database) SetConversationThinkingEnabled(id string, enabled bool) error {
+	v := 0
+	if enabled {
+		v = 1
+	}
+	_, err := d.conn.Exec(
+		`UPDATE conversations SET thinking_enabled = ?, updated_at = datetime('now') WHERE id = ?`,
+		v, id,
+	)
+	return err
 }
 
 func (d *Database) DeleteConversation(id string) error {
@@ -299,11 +316,12 @@ type Model struct {
 	Temperature   *float64 `json:"temperature"`
 	TopP          *float64 `json:"topP"`
 	MaxTokens     *int     `json:"maxTokens"`
+	ThinkingField string   `json:"thinkingField"`
 }
 
 func (d *Database) ListModels() ([]Model, error) {
 	rows, err := d.conn.Query(
-		`SELECT id, provider_id, friendly_name, context_window, temperature, top_p, max_tokens FROM models ORDER BY friendly_name ASC`,
+		`SELECT id, provider_id, friendly_name, context_window, temperature, top_p, max_tokens, thinking_field FROM models ORDER BY friendly_name ASC`,
 	)
 	if err != nil {
 		return nil, err
@@ -313,7 +331,7 @@ func (d *Database) ListModels() ([]Model, error) {
 	var out []Model
 	for rows.Next() {
 		var m Model
-		if err := rows.Scan(&m.ID, &m.ProviderID, &m.FriendlyName, &m.ContextWindow, &m.Temperature, &m.TopP, &m.MaxTokens); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProviderID, &m.FriendlyName, &m.ContextWindow, &m.Temperature, &m.TopP, &m.MaxTokens, &m.ThinkingField); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -324,23 +342,23 @@ func (d *Database) ListModels() ([]Model, error) {
 func (d *Database) GetModel(id string) (Model, error) {
 	var m Model
 	err := d.conn.QueryRow(
-		`SELECT id, provider_id, friendly_name, context_window, temperature, top_p, max_tokens FROM models WHERE id = ?`, id,
-	).Scan(&m.ID, &m.ProviderID, &m.FriendlyName, &m.ContextWindow, &m.Temperature, &m.TopP, &m.MaxTokens)
+		`SELECT id, provider_id, friendly_name, context_window, temperature, top_p, max_tokens, thinking_field FROM models WHERE id = ?`, id,
+	).Scan(&m.ID, &m.ProviderID, &m.FriendlyName, &m.ContextWindow, &m.Temperature, &m.TopP, &m.MaxTokens, &m.ThinkingField)
 	return m, err
 }
 
 func (d *Database) CreateModel(m Model) (Model, error) {
 	_, err := d.conn.Exec(
-		`INSERT INTO models (id, provider_id, friendly_name, context_window, temperature, top_p, max_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.ProviderID, m.FriendlyName, m.ContextWindow, m.Temperature, m.TopP, m.MaxTokens,
+		`INSERT INTO models (id, provider_id, friendly_name, context_window, temperature, top_p, max_tokens, thinking_field) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.ProviderID, m.FriendlyName, m.ContextWindow, m.Temperature, m.TopP, m.MaxTokens, m.ThinkingField,
 	)
 	return m, err
 }
 
 func (d *Database) UpdateModel(m Model) error {
 	_, err := d.conn.Exec(
-		`UPDATE models SET provider_id=?, friendly_name=?, context_window=?, temperature=?, top_p=?, max_tokens=? WHERE id=?`,
-		m.ProviderID, m.FriendlyName, m.ContextWindow, m.Temperature, m.TopP, m.MaxTokens, m.ID,
+		`UPDATE models SET provider_id=?, friendly_name=?, context_window=?, temperature=?, top_p=?, max_tokens=?, thinking_field=? WHERE id=?`,
+		m.ProviderID, m.FriendlyName, m.ContextWindow, m.Temperature, m.TopP, m.MaxTokens, m.ThinkingField, m.ID,
 	)
 	return err
 }

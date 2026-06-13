@@ -148,6 +148,20 @@ func (s *Service) Send(ctx context.Context, conversationID, content string) (db.
 			if modelDef.MaxTokens != nil {
 				req.MaxTokens = *modelDef.MaxTokens
 			}
+			if modelDef.ThinkingField != "" {
+				if conv.ThinkingEnabled {
+					req.ThinkingField = modelDef.ThinkingField
+				} else {
+					// Qwen convention: token /no_think no final do prompt desliga
+					// o raciocínio sem precisar de campo na request.
+					for i := len(req.Messages) - 1; i >= 0; i-- {
+						if req.Messages[i].Role == "user" {
+							req.Messages[i].Content = strings.TrimRight(req.Messages[i].Content, " \n") + " /no_think"
+							break
+						}
+					}
+				}
+			}
 		}
 
 		if conv.Mode == "plan" {
@@ -159,6 +173,7 @@ func (s *Service) Send(ctx context.Context, conversationID, content string) (db.
 		go func() { errCh <- p.Stream(streamCtx, req, eventCh) }()
 
 		var buf strings.Builder
+		var thinkBuf strings.Builder
 		activeToolCalls := make(map[int]*providers.ToolCall)
 		var pendingMetadata map[string]any
 
@@ -167,6 +182,12 @@ func (s *Service) Send(ctx context.Context, conversationID, content string) (db.
 			case providers.EventTextDelta:
 				buf.WriteString(evt.Text)
 				s.emitter.Emit("chat:chunk", map[string]any{
+					"conversationId": conversationID,
+					"text":           evt.Text,
+				})
+			case providers.EventThinkingDelta:
+				thinkBuf.WriteString(evt.Text)
+				s.emitter.Emit("chat:thinking_chunk", map[string]any{
 					"conversationId": conversationID,
 					"text":           evt.Text,
 				})
@@ -225,6 +246,12 @@ func (s *Service) Send(ctx context.Context, conversationID, content string) (db.
 			}
 			tcsJSON, _ := json.Marshal(tcs)
 
+			if thinkBuf.Len() > 0 {
+				if pendingMetadata == nil {
+					pendingMetadata = map[string]any{}
+				}
+				pendingMetadata["reasoning.content"] = thinkBuf.String()
+			}
 			metaJSON := ""
 			if len(pendingMetadata) > 0 {
 				if b, err := json.Marshal(pendingMetadata); err == nil {
@@ -272,7 +299,13 @@ func (s *Service) Send(ctx context.Context, conversationID, content string) (db.
 			continue
 		}
 
-		msg, err := s.db.AddMessage(conversationID, "assistant", buf.String(), model, "", "", "")
+		metaFinalJSON := ""
+		if thinkBuf.Len() > 0 {
+			if b, err := json.Marshal(map[string]any{"reasoning.content": thinkBuf.String()}); err == nil {
+				metaFinalJSON = string(b)
+			}
+		}
+		msg, err := s.db.AddMessage(conversationID, "assistant", buf.String(), model, "", "", metaFinalJSON)
 		if err != nil {
 			return db.Message{}, fmt.Errorf("save assistant msg: %w", err)
 		}

@@ -194,6 +194,7 @@ function mockConversation(title: string): Conversation {
     mode: 'edit',
     planPhase: 'planning',
     contextWindowUsage: 0,
+    thinkingEnabled: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

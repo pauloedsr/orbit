@@ -3,12 +3,12 @@ import { WailsService } from './wails.service';
 import { TabService } from './tab.service';
 import { MessageService } from './message.service';
 import {
-  ChatThinkingPayload, ChatChunkPayload, ChatMessagePayload, ChatStoppedPayload, Message,
+  ChatThinkingPayload, ChatChunkPayload, ChatThinkingChunkPayload, ChatMessagePayload, ChatStoppedPayload, Message,
 } from '../models/types';
 
 @Injectable({ providedIn: 'root' })
 export class StreamService {
-  private streamingStates = signal<Map<string, { content: string }>>(new Map());
+  private streamingStates = signal<Map<string, { content: string; thinking: string }>>(new Map());
 
   constructor(
     private wails: WailsService,
@@ -16,13 +16,20 @@ export class StreamService {
     private messageService: MessageService,
   ) {
     this.wails.onEvent('chat:thinking', (data: ChatThinkingPayload) => {
-      this.streamingStates.update(m => new Map(m).set(data.conversationId, { content: '' }));
+      this.streamingStates.update(m => new Map(m).set(data.conversationId, { content: '', thinking: '' }));
     });
 
     this.wails.onEvent('chat:chunk', (data: ChatChunkPayload) => {
       this.streamingStates.update(m => {
-        const prev = m.get(data.conversationId)?.content ?? '';
-        return new Map(m).set(data.conversationId, { content: prev + data.text });
+        const prev = m.get(data.conversationId) ?? { content: '', thinking: '' };
+        return new Map(m).set(data.conversationId, { ...prev, content: prev.content + data.text });
+      });
+    });
+
+    this.wails.onEvent('chat:thinking_chunk', (data: ChatThinkingChunkPayload) => {
+      this.streamingStates.update(m => {
+        const prev = m.get(data.conversationId) ?? { content: '', thinking: '' };
+        return new Map(m).set(data.conversationId, { ...prev, thinking: prev.thinking + data.text });
       });
     });
 
@@ -47,6 +54,10 @@ export class StreamService {
 
   streamingContentFor(id: string): string {
     return this.streamingStates().get(id)?.content ?? '';
+  }
+
+  streamingThinkingFor(id: string): string {
+    return this.streamingStates().get(id)?.thinking ?? '';
   }
 
   async sendMessage(content: string) {

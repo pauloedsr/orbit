@@ -224,6 +224,23 @@ func (p *OpenAIProvider) Stream(ctx context.Context, req Request, out chan<- Eve
 			if text := delta.Content; text != "" {
 				out <- Event{Type: EventTextDelta, Text: text}
 			}
+			// Thinking: campo extra fora do struct fixo. Segunda passada apenas
+			// quando o modelo declarou suportar (req.ThinkingField != "").
+			if req.ThinkingField != "" {
+				var raw struct {
+					Choices []struct {
+						Delta map[string]json.RawMessage `json:"delta"`
+					} `json:"choices"`
+				}
+				if json.Unmarshal([]byte(data), &raw) == nil && len(raw.Choices) > 0 {
+					if v, ok := raw.Choices[0].Delta[req.ThinkingField]; ok {
+						var s string
+						if json.Unmarshal(v, &s) == nil && s != "" {
+							out <- Event{Type: EventThinkingDelta, Text: s}
+						}
+					}
+				}
+			}
 			for _, tc := range delta.ToolCalls {
 				idx := 0
 				if tc.Index != nil {

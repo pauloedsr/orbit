@@ -3,7 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pauloedsr/orbit/backend/chat"
@@ -82,6 +87,7 @@ type ConversationDTO struct {
 	Mode               string  `json:"mode"`
 	PlanPhase          string  `json:"planPhase"`
 	ContextWindowUsage float64 `json:"contextWindowUsage"`
+	ThinkingEnabled    bool    `json:"thinkingEnabled"`
 	CreatedAt          string  `json:"createdAt"`
 	UpdatedAt          string  `json:"updatedAt"`
 }
@@ -126,6 +132,10 @@ func (a *App) StartPlanImplementation(id string) error {
 	return a.db.SetConversationMode(id, "plan", "implementing")
 }
 
+func (a *App) SetConversationThinkingEnabled(id string, enabled bool) error {
+	return a.db.SetConversationThinkingEnabled(id, enabled)
+}
+
 // ---------------------------------------------------------------------------
 // Messages
 // ---------------------------------------------------------------------------
@@ -138,6 +148,7 @@ type MessageDTO struct {
 	Model          string `json:"model"`
 	ToolCalls      string `json:"toolCalls,omitempty"`
 	ToolCallID     string `json:"toolCallId,omitempty"`
+	Metadata       string `json:"metadata,omitempty"`
 	CreatedAt      string `json:"createdAt"`
 }
 
@@ -271,6 +282,153 @@ func (a *App) Ping() string {
 	return fmt.Sprintf("pong @ %s", time.Now().Format(time.RFC3339))
 }
 
+
+// ---------------------------------------------------------------------------
+// Symbol Search
+// ---------------------------------------------------------------------------
+
+// SearchResult representa um único item nos resultados da busca.
+type SearchResult struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Line *int   `json:"line"` // Ponteiro para permitir valor nulo
+}
+
+// SearchSymbols realiza uma busca concorrente por arquivos e símbolos.
+func (a *App) SearchSymbols(query string) ([]SearchResult, error) {
+	if strings.TrimSpace(query) == "" {
+		return []SearchResult{}, nil
+	}
+
+	var wg sync.WaitGroup
+	resultsChan := make(chan SearchResult, 50)
+
+	// Goroutine 1: Busca de Arquivos
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		globPattern := fmt.Sprintf("**/*%s*", query)
+		files, err := filesystem.SearchFilesByGlob(globPattern)
+		if err != nil {
+			// Em uma aplicação real, logaríamos este erro.
+			// Por simplicidade, vamos ignorá-lo por enquanto.
+			return
+		}
+		for _, file := range files {
+			resultsChan <- SearchResult{
+				Type: "file",
+				Name: filepath.Base(file),
+				Path: file,
+				Line: nil,
+			}
+		}
+	}()
+
+	// Goroutine 2: Busca de Símbolos
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Regex para capturar definições de funções, classes, etc.
+		// Ex: "func myFunction", "class myClass", "def my_function"
+		symbolRegex := fmt.Sprintf(`(?i)(func|class|def|type|interface|method|const|let|var)\s+%s`, regexp.QuoteMeta(query))
+		
+		// Usamos a função GrepFilesLines que já existe no nosso pacote de filesystem.
+		// Ela retorna resultados no formato "path:line:content".
+		grepArgs := map[string]any{
+			"pattern": symbolRegex,
+			"glob":    "**/*.{go,ts,tsx,js,jsx,py,java,cs,rb,php}",
+		}
+		grepOutput := filesystem.GrepFilesLines(grepArgs)
+
+		// A função retorna uma string única, com uma mensagem de erro ou os resultados.
+		if strings.HasPrefix(grepOutput, "Nenhuma ocorrência") || strings.HasPrefix(grepOutput, "Padrão regex inválido") {
+			return
+		}
+
+		lines := strings.Split(grepOutput, "\n")
+		re := regexp.MustCompile(`^([^:]+):(\d+):(.*)`)
+		typeRegex := regexp.MustCompile(`(?i)(func|class|def|type|interface|method|const|let|var)`)
+
+		for _, line := range lines {
+			matches := re.FindStringSubmatch(line)
+			if len(matches) < 4 {
+				continue
+			}
+			
+			path := matches[1]
+			lineNum, err := strconv.Atoi(matches[2])
+			if err != nil {
+				continue
+			}
+			content := matches[3]
+
+			typeMatch := typeRegex.FindString(content)
+			symbolType := "symbol"
+			if typeMatch != "" {
+				symbolType = strings.ToLower(typeMatch)
+			}
+			
+			// Normaliza o tipo para o frontend
+			switch symbolType {
+				case "def":
+					symbolType = "function" // Python
+				case "const", "let", "var":
+					symbolType = "variable"
+			}
+
+
+			resultsChan <- SearchResult{
+				Type: symbolType,
+				Name: query, // O nome do símbolo é a própria query
+				Path: path,
+				Line: &lineNum,
+			}
+		}
+	}()
+
+	// Espera as buscas terminarem e fecha o canal
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Agrega os resultados, removendo duplicatas
+	uniqueResults := make(map[string]SearchResult)
+	for res := range resultsChan {
+		key := fmt.Sprintf("%s:%s", res.Path, res.Type)
+		if res.Line != nil {
+			key = fmt.Sprintf("%s:%d", res.Path, *res.Line)
+		}
+
+		// Prioriza símbolos sobre arquivos em caso de duplicata no mesmo caminho
+		existing, found := uniqueResults[key]
+		if !found || (existing.Type == "file" && res.Type != "file") {
+			uniqueResults[key] = res
+		}
+	}
+
+	// Converte o mapa para um slice
+	finalResults := make([]SearchResult, 0, len(uniqueResults))
+	for _, res := range uniqueResults {
+		finalResults = append(finalResults, res)
+	}
+
+	// Ordena os resultados: arquivos primeiro, depois símbolos por caminho
+	sort.Slice(finalResults, func(i, j int) bool {
+		if finalResults[i].Type == "file" && finalResults[j].Type != "file" {
+			return true
+		}
+		if finalResults[i].Type != "file" && finalResults[j].Type == "file" {
+			return false
+		}
+		return finalResults[i].Path < finalResults[j].Path
+	})
+
+	return finalResults, nil
+}
+
+
 // ---------------------------------------------------------------------------
 // Mappers
 // ---------------------------------------------------------------------------
@@ -293,6 +451,7 @@ func toConvDTO(c db.Conversation) ConversationDTO {
 		Mode:               mode,
 		PlanPhase:          planPhase,
 		ContextWindowUsage: c.ContextWindowUsage,
+		ThinkingEnabled:    c.ThinkingEnabled,
 		CreatedAt:          c.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:          c.UpdatedAt.Format(time.RFC3339),
 	}
@@ -307,6 +466,29 @@ func toMsgDTO(m db.Message) MessageDTO {
 		Model:          m.Model,
 		ToolCalls:      m.ToolCalls,
 		ToolCallID:     m.ToolCallID,
+		Metadata:       m.Metadata,
 		CreatedAt:      m.CreatedAt.Format(time.RFC3339),
 	}
+}
+
+
+// ---------------------------------------------------------------------------
+// File Search for Mentions
+// ---------------------------------------------------------------------------
+
+// SearchFiles é a função exposta para o frontend via Wails.
+// Ela espera um mapa com a chave "pattern" e retorna um slice de strings.
+func (a *App) SearchFiles(params map[string]interface{}) ([]string, error) {
+	pattern, ok := params["pattern"].(string)
+	if !ok || pattern == "" {
+		// Retorna um array vazio se o padrão for inválido, para não quebrar o frontend.
+		return []string{}, nil
+	}
+
+	files, err := filesystem.SearchFilesByGlob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao buscar arquivos: %w", err)
+	}
+
+	return files, nil
 }

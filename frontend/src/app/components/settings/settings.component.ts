@@ -201,6 +201,11 @@ import { ModelDef, Provider } from '../../models/types';
                             <label>Max Tokens</label>
                             <input type="number" [(ngModel)]="form.maxTokens" placeholder="padrão do modelo" />
                           </div>
+                          <div class="field-sm field-wide">
+                            <label>Campo JSON do thinking</label>
+                            <input type="text" [(ngModel)]="form.thinkingField" placeholder="reasoning" spellcheck="false" />
+                            <span class="hint">Vazio = modelo não suporta. Ex.: <code>reasoning</code> (Ollama /v1), <code>reasoning_content</code> (DeepSeek/SGLang), <code>thinking</code> (Ollama nativo).</span>
+                          </div>
                         </div>
                         <div class="form-actions">
                           <button class="btn-sm btn-primary" (click)="saveEdit()" [disabled]="!form.friendlyName.trim()">Salvar</button>
@@ -217,6 +222,7 @@ import { ModelDef, Provider } from '../../models/types';
                             @if (m.temperature !== null) { <span class="param-chip">t={{ m.temperature }}</span> }
                             @if (m.topP !== null) { <span class="param-chip">p={{ m.topP }}</span> }
                             @if (m.maxTokens !== null) { <span class="param-chip">max={{ m.maxTokens }}</span> }
+                            @if (m.thinkingField) { <span class="param-chip">think:{{ m.thinkingField }}</span> }
                             @if (m.providerId) { <span class="param-chip provider-chip">{{ settings.friendlyProviderName(m.providerId) }}</span> }
                           </div>
                         </div>
@@ -281,6 +287,11 @@ import { ModelDef, Provider } from '../../models/types';
                     <div class="field-sm">
                       <label>Max Tokens</label>
                       <input type="number" [(ngModel)]="form.maxTokens" placeholder="padrão do modelo" />
+                    </div>
+                    <div class="field-sm field-wide">
+                      <label>Campo JSON do thinking</label>
+                      <input type="text" [(ngModel)]="form.thinkingField" placeholder="reasoning" spellcheck="false" />
+                      <span class="hint">Vazio = modelo não suporta. Ex.: <code>reasoning</code> (Ollama /v1), <code>reasoning_content</code> (DeepSeek/SGLang), <code>thinking</code> (Ollama nativo).</span>
                     </div>
                   </div>
                   <div class="form-actions">
@@ -593,6 +604,15 @@ import { ModelDef, Provider } from '../../models/types';
       gap: 4px;
     }
 
+    .field-wide { grid-column: span 2; }
+    .field-wide code {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      padding: 0 3px;
+      background: var(--bg-tertiary);
+      border-radius: 3px;
+    }
+
     .form-actions {
       display: flex;
       align-items: center;
@@ -666,7 +686,7 @@ export class SettingsComponent implements OnInit {
   // Model CRUD
   addingNew = signal(false);
   editingId = signal<string | null>(null);
-  form: { id: string; providerId: string; friendlyName: string; contextWindow: number | null; temperature: number | null; topP: number | null; maxTokens: number | null } = this.emptyForm();
+  form: { id: string; providerId: string; friendlyName: string; contextWindow: number | null; temperature: number | null; topP: number | null; maxTokens: number | null; thinkingField: string } = this.emptyForm();
 
   // General
   defaultModelValue = '';
@@ -789,6 +809,7 @@ export class SettingsComponent implements OnInit {
       temperature: m.temperature,
       topP: m.topP,
       maxTokens: m.maxTokens,
+      thinkingField: m.thinkingField ?? '',
     };
     this.editingId.set(m.id);
   }
@@ -818,6 +839,7 @@ export class SettingsComponent implements OnInit {
       id: '', providerId: '', friendlyName: '',
       contextWindow: null as number | null, temperature: null as number | null,
       topP: null as number | null, maxTokens: null as number | null,
+      thinkingField: '',
     };
   }
 
@@ -830,6 +852,7 @@ export class SettingsComponent implements OnInit {
       temperature: this.form.temperature,
       topP: this.form.topP,
       maxTokens: this.form.maxTokens,
+      thinkingField: this.form.thinkingField.trim(),
     };
   }
 }
