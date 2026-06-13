@@ -91,9 +91,23 @@ export interface SubAgentSession {
 }
 
 // Payloads dos eventos de streaming emitidos pelo backend
-export interface ChatThinkingPayload      { conversationId: string }
-export interface ChatChunkPayload         { conversationId: string; text: string }
-export interface ChatThinkingChunkPayload { conversationId: string; text: string }
-export interface ChatMessagePayload       { conversationId: string; message: Message }
-export interface ChatStoppedPayload       { conversationId: string; message: Message | null }
-export interface ChatContextUsagePayload  { conversationId: string; percentage: number; totalTokens: number; contextWindow: number }
+export interface ChatThinkingPayload       { conversationId: string }
+export interface ChatChunkPayload          { conversationId: string; text: string }
+export interface ChatThinkingChunkPayload  { conversationId: string; text: string }
+export interface ChatMessagePayload        { conversationId: string; message: Message }
+export interface ChatStoppedPayload        { conversationId: string; message: Message | null }
+export interface ChatContextUsagePayload   { conversationId: string; percentage: number; totalTokens: number; contextWindow: number }
+export interface ChatToolCallStartPayload  { conversationId: string; index: number; id: string; name: string }
+export interface ChatToolCallDeltaPayload  { conversationId: string; index: number; argDelta: string }
+export interface ChatToolExecutingPayload  { conversationId: string; toolCallId: string; name: string }
+export interface ChatToolResultPayload     { conversationId: string; toolCallId: string; name: string; result: string }
+
+// Estado de uma tool call em andamento dentro da bolha de streaming
+export interface StreamingToolCall {
+  index: number;
+  id: string;
+  name: string;
+  arguments: string;
+  status: 'streaming' | 'executing' | 'done';
+  result?: string;
+}

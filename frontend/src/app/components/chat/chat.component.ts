@@ -136,7 +136,40 @@ import { debounceTime, Subject } from 'rxjs';
               }
               @if (streamService.streamingContentFor(tabService.activeConversationId()!)) {
                 <markdown class="message-content" [data]="streamService.streamingContentFor(tabService.activeConversationId()!)" />
-              } @else if (!streamService.streamingThinkingFor(tabService.activeConversationId()!)) {
+              }
+              @for (tc of streamService.streamingToolCallsFor(tabService.activeConversationId()!); track tc.index) {
+                <div class="tool-call" [class.tool-call--executing]="tc.status === 'executing'" [class.tool-call--done]="tc.status === 'done'">
+                  <div class="tool-call-header">
+                    <span class="tool-call-icon">
+                      @switch (tc.status) {
+                        @case ('streaming') { <span class="spin">⟳</span> }
+                        @case ('executing') { <span class="spin">⚙</span> }
+                        @case ('done')      { ✅ }
+                      }
+                    </span>
+                    <span class="tool-call-name mono">{{ tc.name || '...' }}</span>
+                    <span class="tool-call-status mono">
+                      @switch (tc.status) {
+                        @case ('streaming') { recebendo args }
+                        @case ('executing') { executando }
+                        @case ('done')      { concluído }
+                      }
+                    </span>
+                  </div>
+                  @if (tc.arguments) {
+                    <pre class="tool-call-args">{{ tc.arguments }}</pre>
+                  }
+                  @if (tc.result) {
+                    <details class="tool-call-result">
+                      <summary>Retorno</summary>
+                      <pre>{{ tc.result }}</pre>
+                    </details>
+                  }
+                </div>
+              }
+              @if (!streamService.streamingContentFor(tabService.activeConversationId()!)
+                   && !streamService.streamingThinkingFor(tabService.activeConversationId()!)
+                   && streamService.streamingToolCallsFor(tabService.activeConversationId()!).length === 0) {
                 <div class="message-content"><span class="cursor-blink">▊</span></div>
               }
             </div>
@@ -662,6 +695,80 @@ import { debounceTime, Subject } from 'rxjs';
       font-family: var(--font-mono);
       font-size: 11px;
       line-height: 1.5;
+    }
+
+    .tool-call {
+      margin: 6px 0;
+      padding: 8px 10px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-subtle);
+      border-left: 2px solid var(--accent-dim);
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .tool-call--executing { border-left-color: var(--warning); }
+    .tool-call--done      { border-left-color: var(--success); }
+    .tool-call-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .tool-call-icon { font-size: 12px; }
+    .tool-call-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .tool-call-status {
+      font-size: 10px;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-left: auto;
+    }
+    .tool-call-args {
+      margin: 6px 0 0;
+      padding: 6px 8px;
+      background: var(--bg-tertiary);
+      border-radius: 3px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 160px;
+      overflow-y: auto;
+    }
+    .tool-call-result {
+      margin-top: 6px;
+    }
+    .tool-call-result summary {
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+    .tool-call-result pre {
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: var(--bg-tertiary);
+      border-radius: 3px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    .spin {
+      display: inline-block;
+      animation: spin 1.2s linear infinite;
+      color: var(--accent);
     }
 
     .think-toggle {

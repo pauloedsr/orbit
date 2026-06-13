@@ -197,10 +197,11 @@ func (s *Service) Send(ctx context.Context, conversationID, content string) (db.
 						ID:   evt.ToolCall.ID,
 						Name: evt.ToolCall.Name,
 					}
-					msg := fmt.Sprintf("\n\n⚙️ Chamando ferramenta: `%s`\nParâmetros: ", evt.ToolCall.Name)
-					s.emitter.Emit("chat:chunk", map[string]any{
+					s.emitter.Emit("chat:tool_call_start", map[string]any{
 						"conversationId": conversationID,
-						"text":           msg,
+						"index":          evt.ToolCall.Index,
+						"id":             evt.ToolCall.ID,
+						"name":           evt.ToolCall.Name,
 					})
 				}
 			case providers.EventToolCallDelta:
@@ -208,9 +209,10 @@ func (s *Service) Send(ctx context.Context, conversationID, content string) (db.
 					activeToolCalls[evt.ToolCall.Index] = &providers.ToolCall{}
 				}
 				activeToolCalls[evt.ToolCall.Index].Arguments += evt.ToolCall.ArgDelta
-				s.emitter.Emit("chat:chunk", map[string]any{
+				s.emitter.Emit("chat:tool_call_delta", map[string]any{
 					"conversationId": conversationID,
-					"text":           evt.ToolCall.ArgDelta,
+					"index":          evt.ToolCall.Index,
+					"argDelta":       evt.ToolCall.ArgDelta,
 				})
 			case providers.EventDone:
 				pendingMetadata = evt.Metadata
@@ -285,7 +287,18 @@ func (s *Service) Send(ctx context.Context, conversationID, content string) (db.
 						}
 					}
 				}
+				s.emitter.Emit("chat:tool_executing", map[string]any{
+					"conversationId": conversationID,
+					"toolCallId":     tc.ID,
+					"name":           tc.Name,
+				})
 				result := s.executeToolCall(tc)
+				s.emitter.Emit("chat:tool_result", map[string]any{
+					"conversationId": conversationID,
+					"toolCallId":     tc.ID,
+					"name":           tc.Name,
+					"result":         result,
+				})
 				toolMsg, err := s.db.AddMessage(conversationID, "tool", result, model, "", tc.ID, "")
 				if err != nil {
 					return db.Message{}, fmt.Errorf("save tool result msg: %w", err)

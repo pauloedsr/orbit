@@ -4,11 +4,24 @@ import { TabService } from './tab.service';
 import { MessageService } from './message.service';
 import {
   ChatThinkingPayload, ChatChunkPayload, ChatThinkingChunkPayload, ChatMessagePayload, ChatStoppedPayload, Message,
+  ChatToolCallStartPayload, ChatToolCallDeltaPayload, ChatToolExecutingPayload, ChatToolResultPayload,
+  StreamingToolCall,
 } from '../models/types';
+
+interface StreamState {
+  content: string;
+  thinking: string;
+  toolCalls: Map<number, StreamingToolCall>;
+  toolCallsById: Map<string, number>;
+}
+
+function emptyState(): StreamState {
+  return { content: '', thinking: '', toolCalls: new Map(), toolCallsById: new Map() };
+}
 
 @Injectable({ providedIn: 'root' })
 export class StreamService {
-  private streamingStates = signal<Map<string, { content: string; thinking: string }>>(new Map());
+  private streamingStates = signal<Map<string, StreamState>>(new Map());
 
   constructor(
     private wails: WailsService,
@@ -16,20 +29,60 @@ export class StreamService {
     private messageService: MessageService,
   ) {
     this.wails.onEvent('chat:thinking', (data: ChatThinkingPayload) => {
-      this.streamingStates.update(m => new Map(m).set(data.conversationId, { content: '', thinking: '' }));
+      this.streamingStates.update(m => new Map(m).set(data.conversationId, emptyState()));
     });
 
     this.wails.onEvent('chat:chunk', (data: ChatChunkPayload) => {
-      this.streamingStates.update(m => {
-        const prev = m.get(data.conversationId) ?? { content: '', thinking: '' };
-        return new Map(m).set(data.conversationId, { ...prev, content: prev.content + data.text });
-      });
+      this.mutate(data.conversationId, st => { st.content += data.text; });
     });
 
     this.wails.onEvent('chat:thinking_chunk', (data: ChatThinkingChunkPayload) => {
-      this.streamingStates.update(m => {
-        const prev = m.get(data.conversationId) ?? { content: '', thinking: '' };
-        return new Map(m).set(data.conversationId, { ...prev, thinking: prev.thinking + data.text });
+      this.mutate(data.conversationId, st => { st.thinking += data.text; });
+    });
+
+    this.wails.onEvent('chat:tool_call_start', (data: ChatToolCallStartPayload) => {
+      this.mutate(data.conversationId, st => {
+        st.toolCalls.set(data.index, {
+          index: data.index,
+          id: data.id,
+          name: data.name,
+          arguments: '',
+          status: 'streaming',
+        });
+        if (data.id) st.toolCallsById.set(data.id, data.index);
+      });
+    });
+
+    this.wails.onEvent('chat:tool_call_delta', (data: ChatToolCallDeltaPayload) => {
+      this.mutate(data.conversationId, st => {
+        const tc = st.toolCalls.get(data.index);
+        if (tc) {
+          tc.arguments += data.argDelta;
+        } else {
+          st.toolCalls.set(data.index, {
+            index: data.index, id: '', name: '', arguments: data.argDelta, status: 'streaming',
+          });
+        }
+      });
+    });
+
+    this.wails.onEvent('chat:tool_executing', (data: ChatToolExecutingPayload) => {
+      this.mutate(data.conversationId, st => {
+        const idx = st.toolCallsById.get(data.toolCallId);
+        if (idx !== undefined) {
+          const tc = st.toolCalls.get(idx);
+          if (tc) tc.status = 'executing';
+        }
+      });
+    });
+
+    this.wails.onEvent('chat:tool_result', (data: ChatToolResultPayload) => {
+      this.mutate(data.conversationId, st => {
+        const idx = st.toolCallsById.get(data.toolCallId);
+        if (idx !== undefined) {
+          const tc = st.toolCalls.get(idx);
+          if (tc) { tc.status = 'done'; tc.result = data.result; }
+        }
       });
     });
 
@@ -48,6 +101,20 @@ export class StreamService {
     });
   }
 
+  private mutate(convId: string, fn: (st: StreamState) => void) {
+    this.streamingStates.update(m => {
+      const prev = m.get(convId) ?? emptyState();
+      const next: StreamState = {
+        content: prev.content,
+        thinking: prev.thinking,
+        toolCalls: new Map(prev.toolCalls),
+        toolCallsById: new Map(prev.toolCallsById),
+      };
+      fn(next);
+      return new Map(m).set(convId, next);
+    });
+  }
+
   isStreamingFor(id: string): boolean {
     return this.streamingStates().has(id);
   }
@@ -58,6 +125,12 @@ export class StreamService {
 
   streamingThinkingFor(id: string): string {
     return this.streamingStates().get(id)?.thinking ?? '';
+  }
+
+  streamingToolCallsFor(id: string): StreamingToolCall[] {
+    const st = this.streamingStates().get(id);
+    if (!st) return [];
+    return Array.from(st.toolCalls.values()).sort((a, b) => a.index - b.index);
   }
 
   async sendMessage(content: string) {
